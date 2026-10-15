@@ -12,6 +12,7 @@ from tools.ironore.qualify import (
     encode_varint,
     parse_position,
     read_region_chunk,
+    write_vanilla_config,
 )
 
 
@@ -72,6 +73,18 @@ class CodecTests(unittest.TestCase):
     def test_position_parser_ignores_log_prefix_numbers(self) -> None:
         line = "[12:34:56 INFO]: IronoreBot has data: [20.5d, 100.0d, -2.25d]"
         self.assertEqual(parse_position(line), (20.5, 100.0, -2.25))
+
+    def test_vanilla_fixture_disables_whitelist_and_empty_pause(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            run_dir = Path(directory)
+            write_vanilla_config(run_dir, 25566)
+            properties = dict(
+                line.split("=", 1)
+                for line in (run_dir / "server.properties").read_text().splitlines()
+            )
+        self.assertEqual(properties["white-list"], "false")
+        self.assertEqual(properties["enforce-whitelist"], "false")
+        self.assertEqual(properties["pause-when-empty-seconds"], "-1")
 
 
 if __name__ == "__main__":

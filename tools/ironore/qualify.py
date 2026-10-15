@@ -1015,6 +1015,7 @@ def write_vanilla_config(run_dir: Path, port: int) -> None:
         "enable-command-block": "false",
         "enable-query": "false",
         "enable-rcon": "false",
+        "enforce-whitelist": "false",
         "enforce-secure-profile": "false",
         "force-gamemode": "true",
         "gamemode": "creative",
@@ -1028,6 +1029,7 @@ def write_vanilla_config(run_dir: Path, port: int) -> None:
         "motd": "ironore-qualification",
         "network-compression-threshold": "-1",
         "online-mode": "false",
+        "pause-when-empty-seconds": "-1",
         "prevent-proxy-connections": "false",
         "server-ip": "127.0.0.1",
         "server-port": str(port),
@@ -1035,6 +1037,7 @@ def write_vanilla_config(run_dir: Path, port: int) -> None:
         "spawn-protection": "0",
         "sync-chunk-writes": "false",
         "view-distance": "3",
+        "white-list": "false",
     }
     text = "".join(f"{key}={value}\n" for key, value in properties.items())
     (run_dir / "server.properties").write_text(text, encoding="utf-8")
