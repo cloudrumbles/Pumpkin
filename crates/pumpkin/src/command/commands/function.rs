@@ -1,14 +1,18 @@
 use pumpkin_data::translation;
+use pumpkin_protocol::java::client::play::ArgumentType as JavaClientArgumentType;
 use pumpkin_util::PermissionLvl;
+use pumpkin_util::identifier::Identifier;
 use pumpkin_util::permission::{Permission, PermissionDefault, PermissionRegistry};
 use pumpkin_util::text::TextComponent;
 
 use crate::command::argument_builder::{ArgumentBuilder, argument, command};
-use crate::command::argument_types::core::string::StringArgumentType;
+use crate::command::argument_types::FromStringReader;
+use crate::command::argument_types::argument_type::ArgumentType;
 use crate::command::context::command_context::CommandContext;
 use crate::command::errors::error_types::CommandErrorType;
 use crate::command::node::dispatcher::CommandDispatcher;
 use crate::command::node::{CommandExecutor, CommandExecutorResult};
+use crate::command::string_reader::StringReader;
 use crate::command::suggestion::provider::{SuggestionProvider, SuggestionProviderResult};
 use crate::command::suggestion::suggestions::SuggestionsBuilder;
 
@@ -21,6 +25,49 @@ static ERROR_UNKNOWN_FUNCTION: CommandErrorType<1> = CommandErrorType::new(
 );
 
 struct FunctionSuggestionProvider;
+
+struct FunctionArgumentType;
+
+impl<S: pumpkin_command::source::CommandSource> ArgumentType<S> for FunctionArgumentType {
+    type Item = String;
+
+    fn parse(
+        &self,
+        reader: &mut StringReader,
+    ) -> Result<Self::Item, crate::command::errors::command_syntax_error::CommandSyntaxError> {
+        let is_tag = reader.peek() == Some('#');
+        if is_tag {
+            reader.skip();
+        }
+        let identifier = Identifier::from_reader(reader)?;
+        Ok(if is_tag {
+            format!("#{identifier}")
+        } else {
+            identifier.to_string()
+        })
+    }
+
+    fn client_side_parser(&self) -> JavaClientArgumentType {
+        JavaClientArgumentType::Function
+    }
+
+    fn examples(&self) -> Vec<String> {
+        vec![
+            "foo".to_string(),
+            "foo:bar/baz".to_string(),
+            "#minecraft:load".to_string(),
+        ]
+    }
+}
+
+impl FunctionArgumentType {
+    fn get<'a>(
+        context: &'a CommandContext,
+        name: &str,
+    ) -> Result<&'a str, crate::command::errors::command_syntax_error::CommandSyntaxError> {
+        Ok(context.get_argument::<String>(name)?.as_str())
+    }
+}
 
 impl SuggestionProvider for FunctionSuggestionProvider {
     fn suggest(
@@ -41,7 +88,7 @@ struct FunctionExecutor;
 
 impl CommandExecutor for FunctionExecutor {
     fn execute(&self, context: &CommandContext) -> CommandExecutorResult {
-        let name_str = StringArgumentType::get(context, "name")?;
+        let name_str = FunctionArgumentType::get(context, "name")?;
         let server = context.server();
 
         let Ok(executed_count) =
@@ -92,7 +139,7 @@ pub fn register(dispatcher: &mut CommandDispatcher, registry: &PermissionRegistr
 
     dispatcher.register(
         command("function", DESCRIPTION).requires(PERMISSION).then(
-            argument("name", StringArgumentType::SingleWord)
+            argument("name", FunctionArgumentType)
                 .suggests(FunctionSuggestionProvider)
                 .executes(FunctionExecutor),
         ),
