@@ -710,3 +710,188 @@ pub fn write_stopwatches_stub(
     pumpkin_nbt::nbt_compress::write_gzip_compound_tag(root, file)
         .map_err(|e| WorldInfoError::SerializationError(e.to_string()))
 }
+
+#[cfg(test)]
+mod world_clock_tests {
+    use super::*;
+    use pumpkin_nbt::nbt_compress::{read_gzip_compound_tag, write_gzip_compound_tag};
+    use tempfile::TempDir;
+
+    fn clock_path(level_folder: &Path) -> PathBuf {
+        minecraft_data_dir(level_folder).join("world_clocks.dat")
+    }
+
+    fn write_clock_root(level_folder: &Path, root: NbtCompound) {
+        let data_dir = ensure_minecraft_data_dir(level_folder).unwrap();
+        write_gzip_compound_tag(
+            root,
+            File::create(data_dir.join("world_clocks.dat")).unwrap(),
+        )
+        .unwrap();
+    }
+
+    fn read_clock_root(level_folder: &Path) -> NbtCompound {
+        read_gzip_compound_tag(File::open(clock_path(level_folder)).unwrap()).unwrap()
+    }
+
+    fn complete_clock(total_ticks: i64) -> DimensionClock {
+        DimensionClock {
+            total_ticks,
+            partial_tick: 0.75,
+            rate: 0.5,
+            paused: true,
+            world_age: Some(98_765),
+        }
+    }
+
+    #[test]
+    fn world_clock_round_trip_preserves_runtime_and_unmanaged_nbt() {
+        let temp_dir = TempDir::new().unwrap();
+        let mut overworld = NbtCompound::new();
+        overworld.put_long("total_ticks", 6_000);
+        overworld.put_float("partial_tick", 0.25);
+        overworld.put_float("rate", 2.0);
+        overworld.put_bool("paused", false);
+        overworld.put_long("pumpkin:world_age", 42_000);
+        overworld.put_string("clock_sentinel", "keep-clock".to_string());
+
+        let mut unloaded = NbtCompound::new();
+        unloaded.put_long("total_ticks", 19_000);
+        unloaded.put_string("unloaded_sentinel", "keep-unloaded".to_string());
+
+        let mut data = NbtCompound::new();
+        data.put_int("DataVersion", 4_902);
+        data.put_string("data_sentinel", "keep-data".to_string());
+        data.put_compound("minecraft:overworld", overworld);
+        data.put_compound("example:unloaded", unloaded);
+
+        let mut root = NbtCompound::new();
+        root.put_int("DataVersion", 4_902);
+        root.put_string("root_sentinel", "keep-root".to_string());
+        root.put_compound("data", data);
+        write_clock_root(temp_dir.path(), root);
+
+        let mut clocks = read_world_clocks_strict(temp_dir.path()).unwrap();
+        assert_eq!(
+            clocks.clocks.get("minecraft:overworld"),
+            Some(&DimensionClock {
+                total_ticks: 6_000,
+                partial_tick: 0.25,
+                rate: 2.0,
+                paused: false,
+                world_age: Some(42_000),
+            })
+        );
+        clocks.data_version = 4_903;
+        clocks
+            .clocks
+            .insert("minecraft:overworld".to_string(), complete_clock(7_000));
+        write_world_clocks(temp_dir.path(), &clocks).unwrap();
+
+        let root = read_clock_root(temp_dir.path());
+        assert_eq!(root.get_int("DataVersion"), Some(4_903));
+        assert_eq!(root.get_string("root_sentinel"), Some("keep-root"));
+        let data = root.get_compound("data").unwrap();
+        assert_eq!(data.get_int("DataVersion"), Some(4_903));
+        assert_eq!(data.get_string("data_sentinel"), Some("keep-data"));
+        let overworld = data.get_compound("minecraft:overworld").unwrap();
+        assert_eq!(overworld.get_long("total_ticks"), Some(7_000));
+        assert_eq!(overworld.get_float("partial_tick"), Some(0.75));
+        assert_eq!(overworld.get_float("rate"), Some(0.5));
+        assert_eq!(overworld.get_bool("paused"), Some(true));
+        assert_eq!(overworld.get_long("pumpkin:world_age"), Some(98_765));
+        assert_eq!(overworld.get_string("clock_sentinel"), Some("keep-clock"));
+        assert_eq!(
+            data.get_compound("example:unloaded")
+                .unwrap()
+                .get_string("unloaded_sentinel"),
+            Some("keep-unloaded")
+        );
+        assert!(
+            !minecraft_data_dir(temp_dir.path())
+                .join("world_clocks.dat_new")
+                .exists()
+        );
+    }
+
+    #[test]
+    fn legacy_clock_fields_receive_compatible_defaults() {
+        let temp_dir = TempDir::new().unwrap();
+        let mut legacy_clock = NbtCompound::new();
+        legacy_clock.put_long("total_ticks", 12_345);
+        let mut data = NbtCompound::new();
+        data.put_compound("minecraft:overworld", legacy_clock);
+        let mut root = NbtCompound::new();
+        root.put_compound("data", data);
+        write_clock_root(temp_dir.path(), root);
+
+        assert_eq!(
+            read_dimension_clock(temp_dir.path(), "minecraft:overworld").unwrap(),
+            Some(DimensionClock {
+                total_ticks: 12_345,
+                partial_tick: 0.0,
+                rate: 1.0,
+                paused: false,
+                world_age: None,
+            })
+        );
+    }
+
+    #[test]
+    fn active_clock_read_does_not_parse_an_unloaded_malformed_clock() {
+        let temp_dir = TempDir::new().unwrap();
+        let mut overworld = NbtCompound::new();
+        overworld.put_long("total_ticks", 1_000);
+        let mut malformed_nether = NbtCompound::new();
+        malformed_nether.put_long("total_ticks", 2_000);
+        malformed_nether.put_string("rate", "invalid".to_string());
+        let mut data = NbtCompound::new();
+        data.put_compound("minecraft:overworld", overworld);
+        data.put_compound("minecraft:the_nether", malformed_nether);
+        let mut root = NbtCompound::new();
+        root.put_compound("data", data);
+        write_clock_root(temp_dir.path(), root);
+
+        let overworld = read_dimension_clock(temp_dir.path(), "minecraft:overworld")
+            .unwrap()
+            .unwrap();
+        assert_eq!(overworld.total_ticks, 1_000);
+        assert!(read_dimension_clock(temp_dir.path(), "minecraft:the_nether").is_err());
+    }
+
+    #[test]
+    fn nonfinite_runtime_clock_is_rejected_without_replacing_saved_data() {
+        let temp_dir = TempDir::new().unwrap();
+        let mut clocks = WorldClocksData::default();
+        clocks
+            .clocks
+            .insert("minecraft:overworld".to_string(), complete_clock(6_000));
+        write_world_clocks(temp_dir.path(), &clocks).unwrap();
+        let original = fs::read(clock_path(temp_dir.path())).unwrap();
+
+        clocks.clocks.get_mut("minecraft:overworld").unwrap().rate = f32::INFINITY;
+        assert!(write_world_clocks(temp_dir.path(), &clocks).is_err());
+        assert_eq!(fs::read(clock_path(temp_dir.path())).unwrap(), original);
+    }
+
+    #[test]
+    fn malformed_saved_clock_is_an_error_and_is_not_replaced() {
+        let temp_dir = TempDir::new().unwrap();
+        let mut malformed = NbtCompound::new();
+        malformed.put_string("total_ticks", "invalid".to_string());
+        let mut data = NbtCompound::new();
+        data.put_compound("minecraft:overworld", malformed);
+        let mut root = NbtCompound::new();
+        root.put_compound("data", data);
+        write_clock_root(temp_dir.path(), root);
+        let original = fs::read(clock_path(temp_dir.path())).unwrap();
+
+        assert!(read_dimension_clock(temp_dir.path(), "minecraft:overworld").is_err());
+        let mut replacement = WorldClocksData::default();
+        replacement
+            .clocks
+            .insert("minecraft:overworld".to_string(), complete_clock(6_000));
+        assert!(write_world_clocks(temp_dir.path(), &replacement).is_err());
+        assert_eq!(fs::read(clock_path(temp_dir.path())).unwrap(), original);
+    }
+}

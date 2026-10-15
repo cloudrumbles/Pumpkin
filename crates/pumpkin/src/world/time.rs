@@ -178,6 +178,30 @@ impl LevelTime {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pumpkin_nbt::{NbtCompound, nbt_compress::write_gzip_compound_tag};
+    use pumpkin_world::world_info::data_files::{
+        DimensionClock, WorldClocksData, write_world_clocks,
+    };
+    use std::{fs, fs::File};
+    use tempfile::TempDir;
+
+    fn write_legacy_level_time(level_folder: &Path, day_time: i64, world_age: i64) {
+        let mut data = NbtCompound::new();
+        data.put_long("DayTime", day_time);
+        data.put_long("Time", world_age);
+        let mut root = NbtCompound::new();
+        root.put_compound("Data", data);
+        write_gzip_compound_tag(root, File::create(level_folder.join("level.dat")).unwrap())
+            .unwrap();
+    }
+
+    fn write_clock(level_folder: &Path, clock: DimensionClock) {
+        let mut clocks = WorldClocksData::default();
+        clocks
+            .clocks
+            .insert("minecraft:overworld".to_string(), clock);
+        write_world_clocks(level_folder, &clocks).unwrap();
+    }
 
     #[test]
     fn clock_instance_ticking() {
@@ -225,5 +249,81 @@ mod tests {
 
         time.add_time(-2000);
         assert_eq!(time.time_of_day, 0);
+    }
+
+    #[test]
+    fn complete_dimension_clock_does_not_depend_on_legacy_level_dat() {
+        let temp_dir = TempDir::new().unwrap();
+        write_clock(
+            temp_dir.path(),
+            DimensionClock {
+                total_ticks: 6_000,
+                partial_tick: 0.75,
+                rate: 0.5,
+                paused: true,
+                world_age: Some(90_000),
+            },
+        );
+        fs::write(
+            temp_dir.path().join("level.dat"),
+            b"corrupt legacy metadata",
+        )
+        .unwrap();
+
+        let restored = LevelTime::load(temp_dir.path(), "minecraft:overworld").unwrap();
+        assert_eq!(restored.time_of_day, 6_000);
+        assert_eq!(restored.world_age, 90_000);
+        assert_eq!(restored.partial_tick, 0.75);
+        assert_eq!(restored.rate, 0.5);
+        assert!(restored.paused);
+    }
+
+    #[test]
+    fn absent_clock_uses_legacy_overworld_time_and_world_age() {
+        let temp_dir = TempDir::new().unwrap();
+        write_legacy_level_time(temp_dir.path(), 7_000, 123_456);
+
+        let overworld = LevelTime::load(temp_dir.path(), "minecraft:overworld").unwrap();
+        assert_eq!(overworld.time_of_day, 7_000);
+        assert_eq!(overworld.world_age, 123_456);
+        assert_eq!(overworld.partial_tick, 0.0);
+        assert_eq!(overworld.rate, 1.0);
+        assert!(!overworld.paused);
+
+        let nether = LevelTime::load(temp_dir.path(), "minecraft:the_nether").unwrap();
+        assert_eq!(nether.time_of_day, 0);
+        assert_eq!(nether.world_age, 123_456);
+    }
+
+    #[test]
+    fn legacy_dimension_clock_uses_level_dat_only_for_missing_world_age() {
+        let temp_dir = TempDir::new().unwrap();
+        write_legacy_level_time(temp_dir.path(), 7_000, 123_456);
+        write_clock(
+            temp_dir.path(),
+            DimensionClock {
+                total_ticks: 18_000,
+                partial_tick: 0.0,
+                rate: 1.0,
+                paused: false,
+                world_age: None,
+            },
+        );
+
+        let restored = LevelTime::load(temp_dir.path(), "minecraft:overworld").unwrap();
+        assert_eq!(restored.time_of_day, 18_000);
+        assert_eq!(restored.world_age, 123_456);
+    }
+
+    #[test]
+    fn new_world_without_clock_metadata_uses_defaults() {
+        let temp_dir = TempDir::new().unwrap();
+
+        let restored = LevelTime::load(temp_dir.path(), "minecraft:overworld").unwrap();
+        assert_eq!(restored.time_of_day, 0);
+        assert_eq!(restored.world_age, 0);
+        assert_eq!(restored.partial_tick, 0.0);
+        assert_eq!(restored.rate, 1.0);
+        assert!(!restored.paused);
     }
 }
