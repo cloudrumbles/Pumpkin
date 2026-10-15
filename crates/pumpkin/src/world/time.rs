@@ -1,6 +1,11 @@
 use pumpkin_protocol::{bedrock::client::set_time::CSetTime, java::client::play::CUpdateTime};
 
 use super::World;
+use pumpkin_world::world_info::{
+    WorldInfoError,
+    data_files::{DimensionClock, read_dimension_clock},
+};
+use std::{fs::File, path::Path};
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct ClockInstance {
@@ -98,6 +103,70 @@ impl LevelTime {
             partial_tick: 0.0,
             rate: 1.0,
             paused: false,
+        }
+    }
+
+    /// Restore authoritative clocks before players or ticking can observe this world.
+    pub fn load(level_folder: &Path, dimension: &str) -> Result<Self, WorldInfoError> {
+        let clock = read_dimension_clock(level_folder, dimension)?;
+        if let Some(clock) = clock.as_ref()
+            && let Some(world_age) = clock.world_age
+        {
+            return Ok(Self::from_clock(clock, world_age));
+        }
+
+        let (legacy_day_time, legacy_age) = Self::read_legacy_time(level_folder)?;
+        Ok(clock.map_or_else(
+            || Self {
+                time_of_day: if dimension == "minecraft:overworld" {
+                    legacy_day_time
+                } else {
+                    0
+                },
+                world_age: legacy_age,
+                ..Self::new()
+            },
+            |clock| Self::from_clock(&clock, legacy_age),
+        ))
+    }
+
+    fn read_legacy_time(level_folder: &Path) -> Result<(i64, i64), WorldInfoError> {
+        let legacy_time = match File::open(level_folder.join("level.dat")) {
+            Ok(file) => {
+                let root = pumpkin_nbt::nbt_compress::read_gzip_compound_tag(file)
+                    .map_err(|error| WorldInfoError::DeserializationError(error.to_string()))?;
+                let data = root.get_compound("Data").ok_or_else(|| {
+                    WorldInfoError::DeserializationError("level.dat has no Data compound".into())
+                })?;
+                (
+                    data.get_long("DayTime").unwrap_or(0),
+                    data.get_long("Time").unwrap_or(0),
+                )
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => (0, 0),
+            Err(error) => return Err(error.into()),
+        };
+        Ok(legacy_time)
+    }
+
+    const fn from_clock(clock: &DimensionClock, world_age: i64) -> Self {
+        Self {
+            time_of_day: clock.total_ticks,
+            world_age,
+            partial_tick: clock.partial_tick,
+            rate: clock.rate,
+            paused: clock.paused,
+        }
+    }
+
+    #[must_use]
+    pub const fn snapshot(&self) -> DimensionClock {
+        DimensionClock {
+            total_ticks: self.time_of_day,
+            partial_tick: self.partial_tick,
+            rate: self.rate,
+            paused: self.paused,
+            world_age: Some(self.world_age),
         }
     }
 

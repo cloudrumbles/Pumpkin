@@ -18,11 +18,11 @@ use crate::world_info::{
     DataPacks, MAXIMUM_SUPPORTED_LEVEL_VERSION, MAXIMUM_SUPPORTED_WORLD_DATA_VERSION,
     MINIMUM_SUPPORTED_LEVEL_VERSION, MINIMUM_SUPPORTED_WORLD_DATA_VERSION, WorldVersion,
     data_files::{
-        minecraft_data_dir, read_game_rules, read_wandering_trader, read_weather,
-        read_world_clocks, read_world_gen_settings, write_custom_boss_events_stub,
-        write_game_rules, write_random_sequences_stub, write_scheduled_events_stub,
-        write_scoreboard_stub, write_stopwatches_stub, write_wandering_trader, write_weather,
-        write_world_clocks, write_world_gen_settings,
+        minecraft_data_dir, read_dimension_clock, read_game_rules, read_wandering_trader,
+        read_weather, read_world_clocks_strict, read_world_gen_settings,
+        write_custom_boss_events_stub, write_game_rules, write_random_sequences_stub,
+        write_scheduled_events_stub, write_scoreboard_stub, write_stopwatches_stub,
+        write_wandering_trader, write_weather, write_world_clocks, write_world_gen_settings,
     },
     default_data_packs,
 };
@@ -394,8 +394,7 @@ impl WorldInfoReader for AnvilLevelInfo {
             .join("world_clocks.dat")
             .exists()
         {
-            let clocks = read_world_clocks(level_folder);
-            if let Some(overworld) = clocks.clocks.get("minecraft:overworld") {
+            if let Some(overworld) = read_dimension_clock(level_folder, "minecraft:overworld")? {
                 level_data.day_time = overworld.total_ticks;
             }
         }
@@ -463,7 +462,7 @@ impl WorldInfoWriter for AnvilLevelInfo {
         }
 
         // world_clocks.dat – persist the overworld day_time; preserve other
-        let mut clocks = read_world_clocks(level_folder);
+        let mut clocks = read_world_clocks_strict(level_folder)?;
         clocks.data_version = data_version;
         clocks
             .clocks
@@ -471,11 +470,10 @@ impl WorldInfoWriter for AnvilLevelInfo {
             .and_modify(|c| c.total_ticks = info.day_time)
             .or_insert(crate::world_info::data_files::DimensionClock {
                 total_ticks: info.day_time,
+                ..Default::default()
             });
 
-        if let Err(e) = write_world_clocks(level_folder, &clocks) {
-            error!("Failed to write world_clocks.dat: {e}");
-        }
+        write_world_clocks(level_folder, &clocks)?;
 
         // weather.dat
         let mut weather = read_weather(level_folder);

@@ -74,12 +74,29 @@ impl WorldGenSettingsData {
     }
 }
 
-#[derive(Clone, PartialEq, Eq, Debug, Default)]
+#[derive(Clone, PartialEq, Debug)]
 pub struct DimensionClock {
     pub total_ticks: i64,
+    pub partial_tick: f32,
+    pub rate: f32,
+    pub paused: bool,
+    /// Pumpkin's per-dimension age; absent in legacy/vanilla clock records.
+    pub world_age: Option<i64>,
 }
 
-#[derive(Clone, PartialEq, Eq, Debug, Default)]
+impl Default for DimensionClock {
+    fn default() -> Self {
+        Self {
+            total_ticks: 0,
+            partial_tick: 0.0,
+            rate: 1.0,
+            paused: false,
+            world_age: None,
+        }
+    }
+}
+
+#[derive(Clone, PartialEq, Debug, Default)]
 pub struct WorldClocksData {
     pub clocks: std::collections::HashMap<String, DimensionClock>,
     pub data_version: i32,
@@ -488,73 +505,177 @@ pub fn write_game_rules(
         .map_err(|e| WorldInfoError::SerializationError(e.to_string()))
 }
 
+/// Compatibility reader for callers that already tolerate missing/corrupt metadata.
+/// Runtime clock restoration and saving must use the strict variant below.
 pub fn read_world_clocks(level_folder: &Path) -> WorldClocksData {
-    let path = minecraft_data_dir(level_folder).join("world_clocks.dat");
-    if !path.exists() {
-        return WorldClocksData::default();
-    }
+    read_world_clocks_strict(level_folder).unwrap_or_else(|error| {
+        warn!("Failed to read world_clocks.dat: {error}");
+        WorldClocksData::default()
+    })
+}
 
-    match File::open(&path) {
-        Ok(f) => match read_gzip_compound_tag(f) {
-            Ok(compound) => world_clocks_from_nbt(&compound),
-            Err(e) => {
-                warn!("Failed to parse world_clocks.dat: {e}");
-                WorldClocksData::default()
-            }
-        },
-        Err(e) => {
-            warn!("Failed to open world_clocks.dat: {e}");
-            WorldClocksData::default()
+fn read_clock_root(path: &Path) -> Result<NbtCompound, WorldInfoError> {
+    match File::open(path) {
+        Ok(file) => read_gzip_compound_tag(file)
+            .map_err(|error| WorldInfoError::DeserializationError(error.to_string())),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            let mut root = NbtCompound::new();
+            root.put_compound("data", NbtCompound::new());
+            Ok(root)
         }
+        Err(error) => Err(error.into()),
     }
 }
 
-fn world_clocks_from_nbt(root: &NbtCompound) -> WorldClocksData {
-    let mut result = WorldClocksData::default();
+/// Missing files are new-world defaults. Existing malformed files are errors.
+pub fn read_world_clocks_strict(level_folder: &Path) -> Result<WorldClocksData, WorldInfoError> {
+    let path = minecraft_data_dir(level_folder).join("world_clocks.dat");
+    world_clocks_from_nbt(&read_clock_root(&path)?)
+}
 
-    let Some(inner) = root.get_compound("data") else {
-        return result;
+/// Parse only the requested dimension, so a malformed unloaded record does not
+/// prevent an otherwise valid world from loading.
+pub fn read_dimension_clock(
+    level_folder: &Path,
+    dimension: &str,
+) -> Result<Option<DimensionClock>, WorldInfoError> {
+    let path = minecraft_data_dir(level_folder).join("world_clocks.dat");
+    let root = read_clock_root(&path)?;
+    let inner = clock_data(&root)?;
+    inner
+        .get(dimension)
+        .map(|tag| parse_dimension_clock(dimension, tag))
+        .transpose()
+}
+
+fn clock_data(root: &NbtCompound) -> Result<&NbtCompound, WorldInfoError> {
+    root.get_compound("data").ok_or_else(|| {
+        WorldInfoError::DeserializationError("world_clocks.dat has no data compound".into())
+    })
+}
+
+fn malformed_clock(dimension: &str) -> WorldInfoError {
+    WorldInfoError::DeserializationError(format!("Malformed world clock {dimension}"))
+}
+
+fn validate_dimension_clock(dimension: &str, clock: &DimensionClock) -> Result<(), WorldInfoError> {
+    if clock.partial_tick.is_finite() && clock.rate.is_finite() && clock.rate > 0.0 {
+        Ok(())
+    } else {
+        Err(malformed_clock(dimension))
+    }
+}
+
+fn parse_dimension_clock(dimension: &str, tag: &NbtTag) -> Result<DimensionClock, WorldInfoError> {
+    let NbtTag::Compound(clock) = tag else {
+        return Err(malformed_clock(dimension));
+    };
+    let malformed = || malformed_clock(dimension);
+    let total_ticks = clock.get_long("total_ticks").ok_or_else(malformed)?;
+    let partial_tick = if clock.has("partial_tick") {
+        clock.get_float("partial_tick").ok_or_else(malformed)?
+    } else {
+        0.0
+    };
+    let rate = if clock.has("rate") {
+        clock.get_float("rate").ok_or_else(malformed)?
+    } else {
+        1.0
+    };
+    let paused = if clock.has("paused") {
+        clock.get_bool("paused").ok_or_else(malformed)?
+    } else {
+        false
+    };
+    let world_age = if clock.has("pumpkin:world_age") {
+        Some(clock.get_long("pumpkin:world_age").ok_or_else(malformed)?)
+    } else {
+        None
+    };
+    let clock = DimensionClock {
+        total_ticks,
+        partial_tick,
+        rate,
+        paused,
+        world_age,
+    };
+    validate_dimension_clock(dimension, &clock)?;
+    Ok(clock)
+}
+
+fn world_clocks_from_nbt(root: &NbtCompound) -> Result<WorldClocksData, WorldInfoError> {
+    let inner = clock_data(root)?;
+    let mut result = WorldClocksData {
+        data_version: root
+            .get_int("DataVersion")
+            .or_else(|| inner.get_int("DataVersion"))
+            .unwrap_or(0),
+        ..WorldClocksData::default()
     };
 
-    result.data_version = inner.get_int("DataVersion").unwrap_or(0);
-
     for (key, tag) in &inner.child_tags {
-        if key.as_ref() == "DataVersion" {
-            continue;
-        }
-        if let NbtTag::Compound(dim_compound) = tag {
-            let total_ticks = dim_compound.get_long("total_ticks").unwrap_or(0);
+        if let NbtTag::Compound(clock) = tag {
+            // Preserve unrelated compounds without treating them as clock records.
+            if !clock.has("total_ticks") {
+                continue;
+            }
             result
                 .clocks
-                .insert(key.to_string(), DimensionClock { total_ticks });
+                .insert(key.to_string(), parse_dimension_clock(key, tag)?);
         }
     }
-
-    result
+    Ok(result)
 }
 
+/// The caller serializes read/modify/write for all dimensions sharing this root.
+/// Merge into the old NBT, preserving unknown root, data, and clock fields.
 pub fn write_world_clocks(
     level_folder: &Path,
     clocks: &WorldClocksData,
 ) -> Result<(), WorldInfoError> {
+    for (dimension, clock) in &clocks.clocks {
+        validate_dimension_clock(dimension, clock)?;
+    }
     let dir = ensure_minecraft_data_dir(level_folder)?;
     let path = dir.join("world_clocks.dat");
-
-    let mut inner = NbtCompound::new();
+    let path_new = dir.join("world_clocks.dat_new");
+    let mut root = read_clock_root(&path)?;
+    // Refuse to replace a malformed file with defaults.
+    world_clocks_from_nbt(&root)?;
+    let mut inner = root.get_compound("data").cloned().unwrap_or_default();
     for (dim_name, clock) in &clocks.clocks {
-        let mut dim_compound = NbtCompound::new();
+        if inner.child_tags.contains_key(dim_name.as_str())
+            && !inner
+                .get_compound(dim_name)
+                .is_some_and(|saved| saved.get_long("total_ticks").is_some())
+        {
+            return Err(WorldInfoError::DeserializationError(format!(
+                "Refusing to overwrite malformed world clock {dim_name}"
+            )));
+        }
+        let mut dim_compound = inner.get_compound(dim_name).cloned().unwrap_or_default();
         dim_compound.put_long("total_ticks", clock.total_ticks);
+        dim_compound.put_float("partial_tick", clock.partial_tick);
+        dim_compound.put_float("rate", clock.rate);
+        dim_compound.put_bool("paused", clock.paused);
+        if let Some(world_age) = clock.world_age {
+            dim_compound.put_long("pumpkin:world_age", world_age);
+        }
         inner.put_compound(dim_name, dim_compound);
     }
-    inner.put_int("DataVersion", clocks.data_version);
-
-    let mut root = NbtCompound::new();
+    // SavedData stores DataVersion at the root. Normalize Pumpkin's older
+    // inner placement when that legacy layout is encountered.
+    inner.child_tags.remove("DataVersion");
+    root.put_int("DataVersion", clocks.data_version);
     root.put_compound("data", inner);
 
-    let file = File::create(&path)?;
-
-    pumpkin_nbt::nbt_compress::write_gzip_compound_tag(root, file)
-        .map_err(|e| WorldInfoError::SerializationError(e.to_string()))
+    let mut file = File::create(&path_new)?;
+    pumpkin_nbt::nbt_compress::write_gzip_compound_tag(root, &mut file)
+        .map_err(|error| WorldInfoError::SerializationError(error.to_string()))?;
+    file.sync_all()?;
+    drop(file);
+    fs::rename(path_new, path)?;
+    Ok(())
 }
 
 pub fn read_wandering_trader(level_folder: &Path) -> WanderingTraderData {
@@ -792,7 +913,7 @@ mod world_clock_tests {
         assert_eq!(root.get_int("DataVersion"), Some(4_903));
         assert_eq!(root.get_string("root_sentinel"), Some("keep-root"));
         let data = root.get_compound("data").unwrap();
-        assert_eq!(data.get_int("DataVersion"), Some(4_903));
+        assert_eq!(data.get_int("DataVersion"), None);
         assert_eq!(data.get_string("data_sentinel"), Some("keep-data"));
         let overworld = data.get_compound("minecraft:overworld").unwrap();
         assert_eq!(overworld.get_long("total_ticks"), Some(7_000));
@@ -860,7 +981,7 @@ mod world_clock_tests {
     }
 
     #[test]
-    fn nonfinite_runtime_clock_is_rejected_without_replacing_saved_data() {
+    fn invalid_runtime_clock_is_rejected_without_replacing_saved_data() {
         let temp_dir = TempDir::new().unwrap();
         let mut clocks = WorldClocksData::default();
         clocks
@@ -869,7 +990,14 @@ mod world_clock_tests {
         write_world_clocks(temp_dir.path(), &clocks).unwrap();
         let original = fs::read(clock_path(temp_dir.path())).unwrap();
 
-        clocks.clocks.get_mut("minecraft:overworld").unwrap().rate = f32::INFINITY;
+        for invalid_rate in [f32::INFINITY, f32::NAN, 0.0, -1.0] {
+            clocks.clocks.get_mut("minecraft:overworld").unwrap().rate = invalid_rate;
+            assert!(write_world_clocks(temp_dir.path(), &clocks).is_err());
+            assert_eq!(fs::read(clock_path(temp_dir.path())).unwrap(), original);
+        }
+        let clock = clocks.clocks.get_mut("minecraft:overworld").unwrap();
+        clock.rate = 1.0;
+        clock.partial_tick = f32::NAN;
         assert!(write_world_clocks(temp_dir.path(), &clocks).is_err());
         assert_eq!(fs::read(clock_path(temp_dir.path())).unwrap(), original);
     }
@@ -893,5 +1021,22 @@ mod world_clock_tests {
             .insert("minecraft:overworld".to_string(), complete_clock(6_000));
         assert!(write_world_clocks(temp_dir.path(), &replacement).is_err());
         assert_eq!(fs::read(clock_path(temp_dir.path())).unwrap(), original);
+    }
+
+    #[test]
+    fn malformed_clock_file_is_not_replaced() {
+        let temp_dir = TempDir::new().unwrap();
+        let data_dir = ensure_minecraft_data_dir(temp_dir.path()).unwrap();
+        let path = data_dir.join("world_clocks.dat");
+        fs::write(&path, b"not gzip nbt").unwrap();
+        let original = fs::read(&path).unwrap();
+
+        assert!(read_world_clocks_strict(temp_dir.path()).is_err());
+        let mut replacement = WorldClocksData::default();
+        replacement
+            .clocks
+            .insert("minecraft:overworld".to_string(), complete_clock(6_000));
+        assert!(write_world_clocks(temp_dir.path(), &replacement).is_err());
+        assert_eq!(fs::read(path).unwrap(), original);
     }
 }

@@ -386,6 +386,15 @@ impl World {
             NbtCompound::new()
         };
 
+        let level_time = LevelTime::load(&level.level_folder.root_folder, dimension.minecraft_name)
+            .unwrap_or_else(|error| {
+                error!(
+                    "Refusing to load {} with invalid saved clock data: {error}",
+                    dimension.minecraft_name
+                );
+                std::process::exit(1);
+            });
+
         Self {
             uuid: Uuid::new_v4(),
             level,
@@ -401,7 +410,7 @@ impl World {
                 5,
                 300,
             )),
-            level_time: std::sync::Mutex::new(LevelTime::new()),
+            level_time: std::sync::Mutex::new(level_time),
             dimension,
             weather: std::sync::Mutex::new(Weather::new()),
             block_registry,
@@ -1856,7 +1865,7 @@ impl World {
     }
 
     pub fn tick_environment(self: &Arc<Self>) {
-        let (world_age, is_night, time_of_day) = {
+        let (world_age, is_night, time_of_day, save_clocks) = {
             let mut level_time = self
                 .level_time
                 .lock()
@@ -1887,9 +1896,11 @@ impl World {
                     }
                 }
             }
+            let mut save_clocks = false;
             if self.level.autosave_ticks > 0 && self.level.save_enabled.load(Relaxed) {
                 let autosave = self.level.autosave_ticks as i64;
                 if autosave > 0 && level_time.world_age % autosave == 0 {
+                    save_clocks = true;
                     self.level.should_save.store(true, Relaxed);
                     self.level.level_channel.notify();
                 }
@@ -1898,8 +1909,13 @@ impl World {
                 level_time.world_age,
                 level_time.is_night(),
                 level_time.time_of_day,
+                save_clocks,
             )
         };
+        // Never take the server save lock while holding a LevelTime lock.
+        if save_clocks {
+            self.save_clock_state();
+        }
 
         let (should_reset_weather, weather_cycle_enabled) = {
             let mut weather = self
@@ -7061,7 +7077,16 @@ impl World {
         }
     }
 
+    fn save_clock_state(&self) {
+        if let Some(server) = self.server.upgrade()
+            && let Err(error) = server.save_world_clocks()
+        {
+            error!("Failed to save world clocks: {error}");
+        }
+    }
+
     pub async fn save(&self) {
+        self.save_clock_state();
         let entities = self.entities.load_full();
         self.save_entities_by_chunk(&entities, self.level.live_entity_chunk_positions())
             .await;

@@ -37,6 +37,9 @@ use pumpkin_util::text::TextComponent;
 use pumpkin_world::world_info::anvil::{
     AnvilLevelInfo, LEVEL_DAT_BACKUP_FILE_NAME, LEVEL_DAT_FILE_NAME,
 };
+use pumpkin_world::world_info::data_files::{
+    WorldClocksData, read_world_clocks_strict, write_world_clocks,
+};
 use pumpkin_world::world_info::{LevelData, WorldInfoError, WorldInfoReader, WorldInfoWriter};
 use rand::seq::IndexedRandom;
 use rayon::prelude::*;
@@ -45,6 +48,10 @@ use std::fs;
 use std::net::IpAddr;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicI32, AtomicI64, AtomicU32};
+use std::{
+    collections::{HashMap, hash_map::Entry},
+    path::PathBuf,
+};
 use std::{future::Future, sync::atomic::Ordering, time::Duration};
 use tokio::sync::OnceCell;
 use tokio::task::JoinHandle;
@@ -152,6 +159,8 @@ pub struct Server {
     // world stuff which maybe should be put into a struct
     pub level_info: Arc<ArcSwap<LevelData>>,
     world_info_writer: Arc<dyn WorldInfoWriter>,
+    /// Serializes metadata and clock read/modify/write across all world roots.
+    world_info_save_lock: std::sync::Mutex<()>,
 }
 
 impl Server {
@@ -321,6 +330,7 @@ impl Server {
             player_idle_timeout: AtomicI32::new(0),
             mojang_public_keys: ArcSwap::from_pointee(Vec::new()),
             world_info_writer: Arc::new(AnvilLevelInfo),
+            world_info_save_lock: std::sync::Mutex::new(()),
             level_info,
         };
         let server = Arc::new(server);
@@ -519,6 +529,8 @@ impl Server {
             ));
         }
 
+        self.save_world_clocks()
+            .map_err(|error| format!("Failed to save world clocks: {error}"))?;
         world_to_unload.shutdown().await;
         world_to_unload.unload().await;
 
@@ -531,10 +543,59 @@ impl Server {
         Ok(())
     }
 
+    fn snapshot_world_clocks(&self) -> Result<HashMap<PathBuf, WorldClocksData>, WorldInfoError> {
+        let mut snapshots = HashMap::new();
+        for world in self.worlds.load().iter() {
+            let root = &world.level.level_folder.root_folder;
+            let clocks = match snapshots.entry(root.clone()) {
+                Entry::Occupied(entry) => entry.into_mut(),
+                Entry::Vacant(entry) => entry.insert(read_world_clocks_strict(root)?),
+            };
+            let time = world
+                .level_time
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            clocks
+                .clocks
+                .insert(world.dimension.minecraft_name.to_string(), time.snapshot());
+            clocks.data_version = pumpkin_world::world_info::MAXIMUM_SUPPORTED_WORLD_DATA_VERSION;
+        }
+        Ok(snapshots)
+    }
+
+    pub fn save_world_clocks(&self) -> Result<(), WorldInfoError> {
+        let _guard = self
+            .world_info_save_lock
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        for (root, clocks) in self.snapshot_world_clocks()? {
+            write_world_clocks(&root, &clocks)?;
+        }
+        Ok(())
+    }
+
     pub fn save_world_info(&self) -> Result<(), WorldInfoError> {
-        let level_data = self.level_info.load();
+        let _guard = self
+            .world_info_save_lock
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let snapshots = self.snapshot_world_clocks()?;
+        let root = self.basic_config.get_world_path();
+        let mut level_data = (**self.level_info.load()).clone();
+        if let Some(clock) = snapshots
+            .get(&root)
+            .and_then(|clocks| clocks.clocks.get("minecraft:overworld"))
+        {
+            // The legacy Anvil writer must not overwrite our live snapshot with
+            // the stale LevelData.day_time loaded at server startup.
+            level_data.day_time = clock.total_ticks;
+        }
         self.world_info_writer
-            .write_world_info(&level_data, &self.basic_config.get_world_path())
+            .write_world_info(&level_data, &root)?;
+        for (root, clocks) in snapshots {
+            write_world_clocks(&root, &clocks)?;
+        }
+        Ok(())
     }
 
     pub fn reload_datapacks(&self, server: &Arc<Self>) {
@@ -754,13 +815,7 @@ impl Server {
         for world in self.worlds.load().iter() {
             world.shutdown().await;
         }
-        let level_data = self.level_info.load();
-        // then lets save the world info
-
-        if let Err(err) = self
-            .world_info_writer
-            .write_world_info(&level_data, &self.basic_config.get_world_path())
-        {
+        if let Err(err) = self.save_world_info() {
             error!("Failed to save level.dat: {err}");
         }
         info!("Completed worlds");

@@ -76,7 +76,7 @@ async fn main() {
     info!(
         "{}",
         TextComponent::text(format!(
-            "Starting {} {} Java Minecraft (Protocol {}) | {} Bedrock (Protocol {})",
+            "Starting locally patched {} {} [pomme-clock-persistence-v1] Java Minecraft (Protocol {}) | {} Bedrock (Protocol {})",
             TextComponent::text("Pumpkin")
                 .color_named(NamedColor::Gold)
                 .to_pretty_console(),
