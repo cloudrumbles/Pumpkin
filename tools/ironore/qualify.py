@@ -1113,6 +1113,14 @@ file = ""
 
 [world]
 autosave_ticks = 1200
+
+[world.chunk]
+type = "anvil"
+write_in_place = false
+
+[world.chunk.compression]
+algorithm = "ZLib"
+level = 6
 """
     (run_dir / "pumpkin.toml").write_text(config, encoding="utf-8")
 
@@ -1207,8 +1215,20 @@ def parse_nbt_bool(text: str, name: str) -> bool | None:
 def entity_data_command(
     backend: Literal["pumpkin", "vanilla"], target: str, path: str
 ) -> str:
-    command = f"data get entity {target}"
-    return command if backend == "pumpkin" else f"{command} {path}"
+    return f"data get entity {target} {path}"
+
+
+def datapack_enable_command(
+    backend: Literal["pumpkin", "vanilla"],
+) -> str | None:
+    if backend == "pumpkin":
+        return 'datapack enable "file/ironore_e2e"'
+    return None
+
+
+def block_placement_succeeded(result: CommandResult, x: int, y: int, z: int) -> bool:
+    marker = f"Changed the block at {x}, {y}, {z}"
+    return not result.looks_unsupported and marker in result.text
 
 
 def close_position(
@@ -1337,12 +1357,31 @@ class Qualification:
             self.results.set("server_start", "fail", str(error))
             raise
 
+        assert self.server is not None
+        datapack_command = datapack_enable_command(self.backend)
+        if datapack_command is not None:
+            datapack_result = self.server.run_command(datapack_command)
+            if (
+                datapack_result.looks_unsupported
+                or "ironore_e2e" not in datapack_result.text
+            ):
+                raise QualificationError(
+                    "failed to enable world/datapacks/ironore_e2e: "
+                    + datapack_result.text[-2000:]
+                )
+
         try:
             initial = self._connect_bot()
+            self.server.wait_for_text(
+                f"{BOT_NAME} joined the game",
+                "player join completion",
+                maximum=20.0,
+            )
+            self._prepare_fixture_chunk()
             self.results.set(
                 "protocol_login",
                 "pass",
-                "protocol 777 login/configuration/play and initial teleport completed",
+                "protocol 777 login completed and the fixture chunk became writable",
                 initial_position=[initial.x, initial.y, initial.z],
             )
         except QualificationError as error:
@@ -1436,16 +1475,14 @@ class Qualification:
             "setblock 21 100 21 minecraft:oak_stairs[facing=east,half=top]"
         )
         setblock_marker = self.server.run_command(
-            "execute if block 21 100 21 minecraft:oak_stairs[facing=east,half=top] "
-            "run help setblock"
+            "execute if block 21 100 21 minecraft:oak_stairs run help setblock"
         )
         self.setblock_probe = (setblock_command, setblock_marker)
         fill_command = self.server.run_command(
             "fill 22 100 21 23 100 22 minecraft:oak_stairs[facing=west,half=bottom]"
         )
         fill_marker = self.server.run_command(
-            "execute if block 23 100 22 minecraft:oak_stairs[facing=west,half=bottom] "
-            "run help fill"
+            "execute if block 23 100 22 minecraft:oak_stairs run help fill"
         )
         self.fill_probe = (fill_command, fill_marker)
 
@@ -1458,25 +1495,35 @@ class Qualification:
         )
         clock_rule = self.server.run_command(clock_command)
         clock_set = self.server.run_command("time set 6000")
-        if clock_rule.looks_unsupported or clock_set.looks_unsupported:
+        clock_query_command = (
+            "time query daytime" if self.backend == "pumpkin" else "time query time"
+        )
+        clock_query = self.server.run_command(clock_query_command)
+        if any(
+            result.looks_unsupported for result in (clock_rule, clock_set, clock_query)
+        ):
             self.results.set(
                 "clock_configured",
                 "unsupported",
                 "backend rejected the frozen-clock fixture",
-                output=(clock_rule.text + "\n" + clock_set.text)[-2000:],
+                output=(
+                    clock_rule.text + "\n" + clock_set.text + "\n" + clock_query.text
+                )[-2000:],
             )
-        elif "false" in clock_rule.text.lower() and "6000" in clock_set.text:
+        elif "false" in clock_rule.text.lower() and "6000" in clock_query.text:
             self.results.set(
                 "clock_configured",
                 "pass",
-                "disabled clock advancement and set the overworld clock to 6000",
+                "disabled clock advancement and queried overworld daytime 6000",
             )
         else:
             self.results.set(
                 "clock_configured",
                 "fail",
                 "frozen-clock commands completed without confirming both values",
-                output=(clock_rule.text + "\n" + clock_set.text)[-2000:],
+                output=(
+                    clock_rule.text + "\n" + clock_set.text + "\n" + clock_query.text
+                )[-2000:],
             )
 
         self.server.run_command("setblock 20 99 20 minecraft:gold_block")
@@ -1530,6 +1577,38 @@ class Qualification:
         self.bot.close()
         self.bot = None
         self.server = None
+
+    def _prepare_fixture_chunk(self) -> None:
+        assert self.server is not None
+        forced = self.server.run_command("forceload add 16 16")
+        if forced.looks_unsupported:
+            raise QualificationError(
+                "backend rejected fixture forceload: " + forced.text[-2000:]
+            )
+
+        x, y, z = 20, 98, 20
+        end = time.monotonic() + self.deadline.slice("fixture chunk readiness", 15.0)
+        last = CommandResult("setblock 20 98 20 minecraft:stone", ())
+        while True:
+            last = self.server.run_command(last.command)
+            if block_placement_succeeded(last, x, y, z):
+                cleanup = self.server.run_command(f"setblock {x} {y} {z} minecraft:air")
+                if not block_placement_succeeded(cleanup, x, y, z):
+                    raise QualificationError(
+                        "fixture readiness probe cleanup failed: "
+                        + cleanup.text[-2000:]
+                    )
+                return
+            if last.looks_unsupported:
+                raise QualificationError(
+                    "fixture readiness probe was rejected: " + last.text[-2000:]
+                )
+            remaining = end - time.monotonic()
+            if remaining <= 0:
+                raise QualificationError(
+                    "fixture chunk did not become writable: " + last.text[-2000:]
+                )
+            time.sleep(min(0.1, remaining))
 
     def _bat_first_run(self) -> None:
         assert self.server is not None

@@ -15,15 +15,18 @@ from tools.ironore.qualify import (
     NbtValue,
     Results,
     ServerProcess,
+    block_placement_succeeded,
     block_state_from_chunk,
     command_check,
     command_completion_probe,
+    datapack_enable_command,
     decode_varint_bytes,
     encode_varint,
     entity_data_command,
     parse_nbt_bool,
     parse_position,
     read_region_chunk,
+    write_pumpkin_config,
     write_vanilla_config,
 )
 
@@ -168,10 +171,10 @@ class CodecTests(unittest.TestCase):
         )
         self.assertEqual(observed["status"], "unsupported")
 
-    def test_entity_data_command_uses_pumpkin_root_query(self) -> None:
+    def test_entity_data_command_uses_vanilla_compatible_path(self) -> None:
         self.assertEqual(
             entity_data_command("pumpkin", "IronoreBot", "Pos"),
-            "data get entity IronoreBot",
+            "data get entity IronoreBot Pos",
         )
         self.assertEqual(
             entity_data_command("vanilla", "IronoreBot", "Pos"),
@@ -180,6 +183,31 @@ class CodecTests(unittest.TestCase):
 
     def test_console_completion_probe_does_not_require_a_player(self) -> None:
         self.assertEqual(command_completion_probe(), ("list", "players online"))
+
+    def test_pumpkin_datapack_is_enabled_from_world_datapacks(self) -> None:
+        self.assertEqual(
+            datapack_enable_command("pumpkin"),
+            'datapack enable "file/ironore_e2e"',
+        )
+        self.assertIsNone(datapack_enable_command("vanilla"))
+
+    def test_fixture_block_readiness_requires_success_feedback(self) -> None:
+        unloaded = CommandResult(
+            "setblock 20 98 20 minecraft:stone", ("That position is not loaded",)
+        )
+        placed = CommandResult(
+            "setblock 20 98 20 minecraft:stone",
+            ("Changed the block at 20, 98, 20",),
+        )
+        self.assertFalse(block_placement_succeeded(unloaded, 20, 98, 20))
+        self.assertTrue(block_placement_succeeded(placed, 20, 98, 20))
+
+    def test_pumpkin_fixture_selects_zlib_anvil_compression(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            config_path = Path(directory) / "pumpkin.toml"
+            write_pumpkin_config(config_path.parent, 25566)
+            config = config_path.read_text(encoding="utf-8")
+        self.assertIn('[world.chunk.compression]\nalgorithm = "ZLib"', config)
 
     def test_server_command_caps_console_completion_wait(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
