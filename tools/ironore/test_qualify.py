@@ -13,8 +13,10 @@ from tools.ironore.qualify import (
     Deadline,
     NbtReader,
     NbtValue,
+    Results,
     ServerProcess,
     block_state_from_chunk,
+    command_check,
     command_completion_probe,
     decode_varint_bytes,
     encode_varint,
@@ -135,13 +137,36 @@ class CodecTests(unittest.TestCase):
     def test_root_entity_nbt_parses_position_and_named_flags(self) -> None:
         output = (
             "IronoreBot has the following entity data: "
-            "{OnGround: 1b, Pos: [20.5d, 100.0d, -2.25d], "
+            "{Motion: [0.0d, 0.0d, 0.0d], OnGround: 1b, "
+            "Pos: [20.5d, 100.0d, -2.25d], "
             "NoAI: 1b, NoGravity: 0b}"
         )
         self.assertEqual(parse_position(output), (20.5, 100.0, -2.25))
         self.assertTrue(parse_nbt_bool(output, "NoAI"))
         self.assertFalse(parse_nbt_bool(output, "NoGravity"))
         self.assertIsNone(parse_nbt_bool(output, "PersistenceRequired"))
+
+    def test_syntax_error_echo_cannot_satisfy_fixture_marker(self) -> None:
+        results = Results()
+        command_check(
+            results,
+            "datapack_namespaced_function",
+            CommandResult(
+                "function ironore:namespaced",
+                (
+                    "Incorrect argument for command",
+                    "function ironore:namespaced<--[HERE]",
+                ),
+            ),
+            "ironore:namespaced",
+        )
+        results.finish_unrun("outside this test")
+        observed = next(
+            check
+            for check in results.as_list()
+            if check["name"] == "datapack_namespaced_function"
+        )
+        self.assertEqual(observed["status"], "unsupported")
 
     def test_entity_data_command_uses_pumpkin_root_query(self) -> None:
         self.assertEqual(
