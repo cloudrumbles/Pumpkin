@@ -5,13 +5,21 @@ import tempfile
 import unittest
 import zlib
 from pathlib import Path
+from unittest.mock import patch
 
 from tools.ironore.qualify import (
+    COMMAND_WAIT_SECONDS,
+    CommandResult,
+    Deadline,
     NbtReader,
     NbtValue,
+    ServerProcess,
     block_state_from_chunk,
+    command_completion_probe,
     decode_varint_bytes,
     encode_varint,
+    entity_data_command,
+    parse_nbt_bool,
     parse_position,
     read_region_chunk,
     write_vanilla_config,
@@ -123,6 +131,61 @@ class CodecTests(unittest.TestCase):
     def test_position_parser_ignores_log_prefix_numbers(self) -> None:
         line = "[12:34:56 INFO]: IronoreBot has data: [20.5d, 100.0d, -2.25d]"
         self.assertEqual(parse_position(line), (20.5, 100.0, -2.25))
+
+    def test_root_entity_nbt_parses_position_and_named_flags(self) -> None:
+        output = (
+            "IronoreBot has the following entity data: "
+            "{OnGround: 1b, Pos: [20.5d, 100.0d, -2.25d], "
+            "NoAI: 1b, NoGravity: 0b}"
+        )
+        self.assertEqual(parse_position(output), (20.5, 100.0, -2.25))
+        self.assertTrue(parse_nbt_bool(output, "NoAI"))
+        self.assertFalse(parse_nbt_bool(output, "NoGravity"))
+        self.assertIsNone(parse_nbt_bool(output, "PersistenceRequired"))
+
+    def test_entity_data_command_uses_pumpkin_root_query(self) -> None:
+        self.assertEqual(
+            entity_data_command("pumpkin", "IronoreBot", "Pos"),
+            "data get entity IronoreBot",
+        )
+        self.assertEqual(
+            entity_data_command("vanilla", "IronoreBot", "Pos"),
+            "data get entity IronoreBot Pos",
+        )
+
+    def test_console_completion_probe_does_not_require_a_player(self) -> None:
+        self.assertEqual(command_completion_probe(), ("list", "players online"))
+
+    def test_server_command_caps_console_completion_wait(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            server = ServerProcess(
+                ("unused",), root, root / "server.log", Deadline(60.0)
+            )
+            with (
+                patch.object(server, "_write_stdin") as write_stdin,
+                patch.object(server, "wait_for_text") as wait_for_text,
+            ):
+                result = server.run_command("data get entity IronoreBot Pos")
+
+        self.assertEqual(result, CommandResult("data get entity IronoreBot Pos", ()))
+        write_stdin.assert_called_once_with("data get entity IronoreBot Pos\nlist\n")
+        wait_for_text.assert_called_once_with(
+            "players online",
+            "command completion: data get entity IronoreBot Pos",
+            0,
+            maximum=COMMAND_WAIT_SECONDS,
+        )
+
+    def test_pumpkin_syntax_error_is_classified_as_unsupported(self) -> None:
+        result = CommandResult(
+            "data get entity IronoreBot Pos",
+            (
+                "Incorrect argument for command",
+                "data get entity IronoreBot Pos<--[HERE]",
+            ),
+        )
+        self.assertTrue(result.looks_unsupported)
 
     def test_vanilla_fixture_disables_whitelist_and_empty_pause(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

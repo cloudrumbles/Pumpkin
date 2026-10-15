@@ -9,7 +9,7 @@ check is written to `qualification.json` as `pass`, `fail`, `unsupported`, or
 Pumpkin:
 
 ```sh
-uv run --project tools/ironore python tools/ironore/qualify.py \
+uv run --no-project python tools/ironore/qualify.py \
   --backend pumpkin \
   --executable /absolute/path/to/pumpkin \
   --run-dir /absolute/path/to/new-run-directory \
@@ -19,7 +19,7 @@ uv run --project tools/ironore python tools/ironore/qualify.py \
 Official vanilla 26.3:
 
 ```sh
-uv run --project tools/ironore python tools/ironore/qualify.py \
+uv run --no-project python tools/ironore/qualify.py \
   --backend vanilla \
   --vanilla-jar /home/shah/.cache/ironore-java-reference/minecraft-server-26.3.jar \
   --run-dir /absolute/path/to/new-run-directory \
