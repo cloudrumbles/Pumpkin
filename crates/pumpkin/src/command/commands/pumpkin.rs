@@ -287,7 +287,7 @@ impl CommandExecutor for Executor {
             "release"
         };
         let version_string = format!(
-            "Local patch pomme-clock-persistence-v1; {} (Base commit: {}/{}) - {} Contributors",
+            "Ironore backend v1; {} (Commit: {}/{}) - {} Contributors",
             CARGO_PKG_VERSION,
             GIT_HASH,
             profile,
