@@ -27,6 +27,7 @@ PROTOCOL_VERSION = 777
 EXPECTED_VERSION_NAME = "26.3"
 BOT_NAME = "IronoreBot"
 BOT_UUID = uuid.UUID("8e7157f0-5878-4fb1-a728-a330dc58b64d")
+COMMAND_WAIT_SECONDS = 5.0
 EULA_SOURCE = Path(
     "/home/shah/workspace/skirt-physics-lab/build/run/clientGameTest/eula.txt"
 )
@@ -424,6 +425,23 @@ class JavaBot:
             if self._socket is None:
                 raise QualificationError("bot socket is closed")
 
+    def assert_connected_for(self, seconds: float) -> None:
+        end = time.monotonic() + self._deadline.slice(
+            "post-teleport connection observation", seconds
+        )
+        with self._condition:
+            while True:
+                if self._error is not None:
+                    raise QualificationError(self._error)
+                if self._disconnect is not None:
+                    raise QualificationError(
+                        f"server disconnected bot: {self._disconnect}"
+                    )
+                remaining = end - time.monotonic()
+                if remaining <= 0:
+                    return
+                self._condition.wait(timeout=remaining)
+
     def _wait_for(self, predicate: Callable[[], bool], operation: str) -> None:
         check = predicate
         end = time.monotonic() + self._deadline.slice(operation)
@@ -564,6 +582,12 @@ class JavaBot:
             self._condition.notify_all()
 
 
+def command_completion_probe() -> tuple[str, str]:
+    # `say` does not write to Pumpkin's console. `list` emits one feedback line
+    # even with no connected players, so it also frames commands after a kick.
+    return "list", "players online"
+
+
 class ServerProcess:
     def __init__(
         self,
@@ -613,13 +637,20 @@ class ServerProcess:
         self.wait_for_text(readiness, "server readiness")
 
     def run_command(self, command: str) -> CommandResult:
-        token = f"__IRONORE_CMD_{uuid.uuid4().hex}__"
+        completion_command, completion_marker = command_completion_probe()
         with self._condition:
             start = len(self._lines)
-        self._write_stdin(f"{command}\nsay {token}\n")
-        self.wait_for_text(token, f"command completion: {command}", start)
+        self._write_stdin(f"{command}\n{completion_command}\n")
+        self.wait_for_text(
+            completion_marker,
+            f"command completion: {command}",
+            start,
+            maximum=COMMAND_WAIT_SECONDS,
+        )
         with self._condition:
-            relevant = tuple(line for line in self._lines[start:] if token not in line)
+            relevant = tuple(
+                line for line in self._lines[start:] if completion_marker not in line
+            )
         return CommandResult(command, relevant)
 
     def flush_commands(self, commands: Sequence[str]) -> None:
@@ -658,8 +689,14 @@ class ServerProcess:
                         pass
         self._close_streams()
 
-    def wait_for_text(self, needle: str, operation: str, start: int = 0) -> None:
-        end = time.monotonic() + self._deadline.slice(operation, 60.0)
+    def wait_for_text(
+        self,
+        needle: str,
+        operation: str,
+        start: int = 0,
+        maximum: float = 60.0,
+    ) -> None:
+        end = time.monotonic() + self._deadline.slice(operation, maximum)
         with self._condition:
             while not any(needle in line for line in self._lines[start:]):
                 process = self._process
@@ -995,10 +1032,10 @@ def write_datapack(run_dir: Path) -> None:
     }
     (root / "pack.mcmeta").write_text(json.dumps(pack), encoding="utf-8")
     (root / "data" / "ironore" / "function" / "namespaced.mcfunction").write_text(
-        "say __IRONORE_FUNCTION_NAMESPACED__\n", encoding="utf-8"
+        "help function\n", encoding="utf-8"
     )
     (root / "data" / "minecraft" / "function" / "default.mcfunction").write_text(
-        "say __IRONORE_FUNCTION_DEFAULT__\n", encoding="utf-8"
+        "help datapack\n", encoding="utf-8"
     )
 
 
@@ -1147,6 +1184,26 @@ def parse_position(text: str) -> tuple[float, float, float] | None:
         float(match.group(2)),
         float(match.group(3)),
     )
+
+
+def parse_nbt_bool(text: str, name: str) -> bool | None:
+    import re
+
+    match = re.search(
+        rf'(?<![\w])"?{re.escape(name)}"?\s*:\s*(1b|0b|true|false)\b',
+        text,
+        flags=re.IGNORECASE,
+    )
+    if match is None:
+        return None
+    return match.group(1).lower() in ("1b", "true")
+
+
+def entity_data_command(
+    backend: Literal["pumpkin", "vanilla"], target: str, path: str
+) -> str:
+    command = f"data get entity {target}"
+    return command if backend == "pumpkin" else f"{command} {path}"
 
 
 def close_position(
@@ -1307,7 +1364,7 @@ class Qualification:
                 raise QualificationError(
                     "teleport acknowledgement order was not preserved"
                 )
-            self.bot.assert_connected()
+            self.bot.assert_connected_for(0.5)
             self.results.set(
                 "teleport_queue_ack_order",
                 "pass",
@@ -1315,14 +1372,16 @@ class Qualification:
                 teleport_ids=[item.teleport_id for item in held],
                 positions=[[item.x, item.y, item.z] for item in held],
             )
-        except QualificationError as error:
+        except (OSError, QualificationError) as error:
             self.results.set("teleport_queue_ack_order", "fail", str(error))
             try:
                 self.bot.release_held()
             except (OSError, QualificationError):
                 pass
 
-        position_result = self.server.run_command(f"data get entity {BOT_NAME} Pos")
+        position_result = self.server.run_command(
+            entity_data_command(self.backend, BOT_NAME, "Pos")
+        )
         try:
             self.bot.assert_connected()
         except QualificationError as error:
@@ -1359,13 +1418,13 @@ class Qualification:
             self.results,
             "datapack_namespaced_function",
             self.server.run_command("function ironore:namespaced"),
-            "__IRONORE_FUNCTION_NAMESPACED__",
+            "ironore:namespaced",
         )
         command_check(
             self.results,
             "datapack_default_function",
             self.server.run_command("function default"),
-            "__IRONORE_FUNCTION_DEFAULT__",
+            "default",
         )
 
         setblock_command = self.server.run_command(
@@ -1373,7 +1432,7 @@ class Qualification:
         )
         setblock_marker = self.server.run_command(
             "execute if block 21 100 21 minecraft:oak_stairs[facing=east,half=top] "
-            "run say __IRONORE_SETBLOCK_OK__"
+            "run help setblock"
         )
         self.setblock_probe = (setblock_command, setblock_marker)
         fill_command = self.server.run_command(
@@ -1381,13 +1440,17 @@ class Qualification:
         )
         fill_marker = self.server.run_command(
             "execute if block 23 100 22 minecraft:oak_stairs[facing=west,half=bottom] "
-            "run say __IRONORE_FILL_OK__"
+            "run help fill"
         )
         self.fill_probe = (fill_command, fill_marker)
 
         self._bat_first_run()
 
-        clock_command = "gamerule minecraft:advance_time false"
+        clock_command = (
+            "gamerule advance_time false"
+            if self.backend == "pumpkin"
+            else "gamerule minecraft:advance_time false"
+        )
         clock_rule = self.server.run_command(clock_command)
         clock_set = self.server.run_command("time set 6000")
         if clock_rule.looks_unsupported or clock_set.looks_unsupported:
@@ -1413,17 +1476,15 @@ class Qualification:
 
         self.server.run_command("setblock 20 99 20 minecraft:gold_block")
         block_before = self.server.run_command(
-            "execute if block 20 99 20 minecraft:gold_block run say __IRONORE_BLOCK_OK__"
+            "execute if block 20 99 20 minecraft:gold_block run help clone"
         )
-        command_check(
-            self.results, "block_configured", block_before, "__IRONORE_BLOCK_OK__"
-        )
+        command_check(self.results, "block_configured", block_before, "/clone")
 
         chest_set = self.server.run_command("setblock 24 100 24 minecraft:chest")
         chest_data_query = self.server.run_command("data get block 24 100 24")
         chest_remove = self.server.run_command("setblock 24 100 24 minecraft:air")
         chest_absent = self.server.run_command(
-            "execute if block 24 100 24 minecraft:air run say __IRONORE_CHEST_REMOVED__"
+            "execute if block 24 100 24 minecraft:air run help data"
         )
         if any(
             result.looks_unsupported
@@ -1449,7 +1510,7 @@ class Qualification:
                 self.results,
                 "chest_removed_before_save",
                 chest_absent,
-                "__IRONORE_CHEST_REMOVED__",
+                "/data",
             )
 
         clean = self.server.stop()
@@ -1472,13 +1533,25 @@ class Qualification:
             "NoGravity:1b,PersistenceRequired:1b}"
         )
         first_pos_result = self.server.run_command(
-            "data get entity @e[type=minecraft:bat,tag=ironore_bat,limit=1] Pos"
+            entity_data_command(
+                self.backend,
+                "@e[type=minecraft:bat,tag=ironore_bat,limit=1]",
+                "Pos",
+            )
         )
         first_no_ai = self.server.run_command(
-            "data get entity @e[type=minecraft:bat,tag=ironore_bat,limit=1] NoAI"
+            entity_data_command(
+                self.backend,
+                "@e[type=minecraft:bat,tag=ironore_bat,limit=1]",
+                "NoAI",
+            )
         )
         first_no_gravity = self.server.run_command(
-            "data get entity @e[type=minecraft:bat,tag=ironore_bat,limit=1] NoGravity"
+            entity_data_command(
+                self.backend,
+                "@e[type=minecraft:bat,tag=ironore_bat,limit=1]",
+                "NoGravity",
+            )
         )
         if any(
             result.looks_unsupported
@@ -1499,11 +1572,20 @@ class Qualification:
         before = parse_position(first_pos_result.text)
         time.sleep(min(1.0, self.deadline.slice("bat tick observation", 1.0)))
         after_result = self.server.run_command(
-            "data get entity @e[type=minecraft:bat,tag=ironore_bat,limit=1] Pos"
+            entity_data_command(
+                self.backend,
+                "@e[type=minecraft:bat,tag=ironore_bat,limit=1]",
+                "Pos",
+            )
         )
         after = parse_position(after_result.text)
         flags = first_no_ai.text + "\n" + first_no_gravity.text
-        flags_true = flags.lower().count("1b") >= 2 or flags.lower().count("true") >= 2
+        flags_true = (
+            parse_nbt_bool(flags, "NoAI") is True
+            and parse_nbt_bool(flags, "NoGravity") is True
+            if self.backend == "pumpkin"
+            else flags.lower().count("1b") >= 2 or flags.lower().count("true") >= 2
+        )
         if (
             before is not None
             and after is not None
@@ -1561,7 +1643,7 @@ class Qualification:
             self.setblock_probe,
             ((21, 100, 21),),
             {"facing": "east", "half": "top"},
-            "__IRONORE_SETBLOCK_OK__",
+            "/setblock",
         )
         self._offline_block_state_check(
             "fill_properties",
@@ -1573,7 +1655,7 @@ class Qualification:
                 (23, 100, 22),
             ),
             {"facing": "west", "half": "bottom"},
-            "__IRONORE_FILL_OK__",
+            "/fill",
         )
 
     def _offline_block_state_check(
@@ -1703,12 +1785,14 @@ class Qualification:
             self.results,
             "block_restart_query",
             self.server.run_command(
-                "execute if block 20 99 20 minecraft:gold_block run say __IRONORE_BLOCK_RESTART_OK__"
+                "execute if block 20 99 20 minecraft:gold_block run help fill"
             ),
-            "__IRONORE_BLOCK_RESTART_OK__",
+            "/fill",
         )
 
-        player_result = self.server.run_command(f"data get entity {BOT_NAME} Pos")
+        player_result = self.server.run_command(
+            entity_data_command(self.backend, BOT_NAME, "Pos")
+        )
         player_position = parse_position(player_result.text)
         expected = (20.5, 100.0, 20.5)
         if player_position is not None and close_position(player_position, expected):
@@ -1734,13 +1818,25 @@ class Qualification:
             )
 
         bat_pos = self.server.run_command(
-            "data get entity @e[type=minecraft:bat,tag=ironore_bat,limit=1] Pos"
+            entity_data_command(
+                self.backend,
+                "@e[type=minecraft:bat,tag=ironore_bat,limit=1]",
+                "Pos",
+            )
         )
         bat_no_ai = self.server.run_command(
-            "data get entity @e[type=minecraft:bat,tag=ironore_bat,limit=1] NoAI"
+            entity_data_command(
+                self.backend,
+                "@e[type=minecraft:bat,tag=ironore_bat,limit=1]",
+                "NoAI",
+            )
         )
         bat_no_gravity = self.server.run_command(
-            "data get entity @e[type=minecraft:bat,tag=ironore_bat,limit=1] NoGravity"
+            entity_data_command(
+                self.backend,
+                "@e[type=minecraft:bat,tag=ironore_bat,limit=1]",
+                "NoGravity",
+            )
         )
         combined = bat_pos.text + "\n" + bat_no_ai.text + "\n" + bat_no_gravity.text
         if any(
@@ -1755,7 +1851,11 @@ class Qualification:
         else:
             position = parse_position(bat_pos.text)
             flags_true = (
-                combined.lower().count("1b") >= 2 or combined.lower().count("true") >= 2
+                parse_nbt_bool(combined, "NoAI") is True
+                and parse_nbt_bool(combined, "NoGravity") is True
+                if self.backend == "pumpkin"
+                else combined.lower().count("1b") >= 2
+                or combined.lower().count("true") >= 2
             )
             if position is not None and flags_true:
                 self.results.set(
