@@ -98,3 +98,44 @@ pub fn register(dispatcher: &mut CommandDispatcher, registry: &PermissionRegistr
         ),
     );
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::command::argument_types::argument_type::ArgumentType;
+    use crate::command::source::DummySource;
+    use crate::command::string_reader::StringReader;
+
+    use super::FunctionArgumentType;
+
+    #[test]
+    fn parses_namespaced_function_id() {
+        let input = "ironore:bootstrap/main";
+        let mut reader = StringReader::new(input);
+
+        let parsed = ArgumentType::<DummySource>::parse(&FunctionArgumentType, &mut reader)
+            .expect("valid namespaced function");
+
+        assert_eq!(parsed, input);
+        assert_eq!(reader.cursor(), input.len());
+    }
+
+    #[test]
+    fn adds_default_namespace_to_function_id() {
+        let mut reader = StringReader::new("load/start");
+
+        let parsed = ArgumentType::<DummySource>::parse(&FunctionArgumentType, &mut reader)
+            .expect("valid default-namespace function");
+
+        assert_eq!(parsed, "minecraft:load/start");
+    }
+
+    #[test]
+    fn preserves_function_tag_marker_while_normalizing_id() {
+        let mut reader = StringReader::new("#load");
+
+        let parsed = ArgumentType::<DummySource>::parse(&FunctionArgumentType, &mut reader)
+            .expect("valid function tag");
+
+        assert_eq!(parsed, "#minecraft:load");
+    }
+}

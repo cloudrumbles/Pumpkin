@@ -61,3 +61,54 @@ impl BlockArgumentType {
         context.get_argument::<&'static Block>(name).copied()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::argument_types::argument_type::ArgumentType;
+    use crate::argument_types::block::{
+        BlockStateArgumentType, INVALID_BLOCK_PROPERTY_ERROR_TYPE,
+        UNKNOWN_BLOCK_PROPERTY_ERROR_TYPE,
+    };
+    use crate::source::DummySource;
+    use crate::string_reader::StringReader;
+
+    #[test]
+    fn parses_block_state_properties_over_default_state() {
+        let input = "oak_stairs[facing=east,half=top]";
+        let mut reader = StringReader::new(input);
+
+        let parsed = ArgumentType::<DummySource>::parse(&BlockStateArgumentType, &mut reader)
+            .expect("valid block state");
+
+        assert_eq!(reader.cursor(), input.len());
+        assert_eq!(parsed.block.name, "oak_stairs");
+        let properties = parsed
+            .block
+            .properties(parsed.state.id)
+            .expect("oak stairs properties")
+            .to_props();
+        assert!(properties.contains(&("facing", "east")));
+        assert!(properties.contains(&("half", "top")));
+        assert!(properties.contains(&("waterlogged", "false")));
+    }
+
+    #[test]
+    fn rejects_unknown_block_state_property() {
+        let mut reader = StringReader::new("stone[facing=east]");
+
+        let error = ArgumentType::<DummySource>::parse(&BlockStateArgumentType, &mut reader)
+            .expect_err("stone has no facing property");
+
+        assert_eq!(error.error_type, &UNKNOWN_BLOCK_PROPERTY_ERROR_TYPE);
+    }
+
+    #[test]
+    fn rejects_invalid_block_state_property_value() {
+        let mut reader = StringReader::new("oak_stairs[facing=up]");
+
+        let error = ArgumentType::<DummySource>::parse(&BlockStateArgumentType, &mut reader)
+            .expect_err("stairs cannot face up");
+
+        assert_eq!(error.error_type, &INVALID_BLOCK_PROPERTY_ERROR_TYPE);
+    }
+}
