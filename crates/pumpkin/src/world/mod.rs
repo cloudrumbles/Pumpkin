@@ -7571,19 +7571,69 @@ fn merge_entity_records(data: &mut Vec<NbtCompound>, live: bool, fresh: Vec<NbtC
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
+    use std::sync::{Arc, Weak};
+
+    use arc_swap::ArcSwap;
+    use pumpkin_config::world::LevelConfig;
     use pumpkin_data::{
         Block,
         block_properties::{ChestLikeProperties, ChestType, HorizontalFacing, WaterLikeProperties},
+        dimension::Dimension,
         fluid::Fluid,
     };
     use pumpkin_nbt::compound::NbtCompound;
     use pumpkin_util::math::position::BlockPos;
+    use pumpkin_util::math::vector2::Vector2;
+    use pumpkin_util::world_seed::Seed;
+    use pumpkin_world::chunk::{ChunkData, io::Dirtiable};
+    use pumpkin_world::level::Level;
+    use pumpkin_world::world_info::LevelData;
+    use tempfile::TempDir;
     use uuid::Uuid;
+
+    use crate::block::registry::BlockRegistry;
 
     use super::{
         World, bedrock_block_breaking_rate, bedrock_chest_block_actor, merge_entity_records,
     };
+
+    pub(crate) struct TestWorld {
+        pub(crate) world: Arc<World>,
+        pub(crate) level: Arc<Level>,
+        _temp_dir: TempDir,
+    }
+
+    impl TestWorld {
+        pub(crate) fn new() -> Self {
+            let temp_dir = TempDir::new().expect("temporary world directory");
+            let dimension = Dimension::OVERWORLD;
+            let level = Level::from_root_folder(
+                &LevelConfig::default(),
+                temp_dir.path().to_path_buf(),
+                0,
+                dimension.clone(),
+            );
+            let level_info = Arc::new(ArcSwap::new(Arc::new(LevelData::default(Seed(0)))));
+            let world = Arc::new(World::load(
+                level.clone(),
+                level_info,
+                dimension,
+                Arc::new(BlockRegistry::default()),
+                Weak::new(),
+            ));
+
+            Self {
+                world,
+                level,
+                _temp_dir: temp_dir,
+            }
+        }
+
+        pub(crate) async fn shutdown(self) {
+            self.level.shutdown().await;
+        }
+    }
 
     fn record(uuid: Option<Uuid>, id: &str) -> NbtCompound {
         let mut nbt = NbtCompound::new();
@@ -7598,6 +7648,40 @@ mod tests {
         data.iter()
             .filter_map(|record| record.get_string("id"))
             .collect()
+    }
+
+    #[tokio::test]
+    async fn removing_an_unloaded_block_entity_clears_its_saved_nbt() {
+        let fixture = TestWorld::new();
+        let position = BlockPos::new(5, 64, 7);
+        let chunk_position = position.chunk_position();
+        let chunk = ChunkData::empty_sync(chunk_position.x, chunk_position.y);
+        let mut nbt = NbtCompound::new();
+        nbt.put_string("id", "minecraft:chest".to_string());
+        nbt.put_int("x", position.0.x);
+        nbt.put_int("y", position.0.y);
+        nbt.put_int("z", position.0.z);
+        chunk
+            .pending_block_entities
+            .lock()
+            .unwrap()
+            .insert(position, nbt);
+        fixture.level.loaded_chunks.insert(
+            Vector2::new(chunk_position.x, chunk_position.y),
+            chunk.clone(),
+        );
+
+        fixture.world.remove_block_entity(&position);
+
+        assert!(
+            !chunk
+                .pending_block_entities
+                .lock()
+                .unwrap()
+                .contains_key(&position)
+        );
+        assert!(chunk.is_dirty());
+        fixture.shutdown().await;
     }
 
     #[test]

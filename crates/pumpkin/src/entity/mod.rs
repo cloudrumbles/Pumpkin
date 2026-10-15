@@ -4442,7 +4442,33 @@ impl Flag {
 
 #[cfg(test)]
 mod tests {
+    use crate::world::tests::TestWorld;
+
     use super::*;
+
+    #[tokio::test]
+    async fn no_gravity_round_trips_through_base_entity_nbt() {
+        let fixture = TestWorld::new();
+        let entity = Entity::new(
+            fixture.world.clone(),
+            Vector3::new(1.0, 64.0, 1.0),
+            &EntityType::ARMOR_STAND,
+        );
+        entity.set_has_no_gravity(true);
+
+        let mut nbt = NbtCompound::new();
+        entity.write_nbt(&mut nbt);
+        assert_eq!(nbt.get_bool("NoGravity"), Some(true));
+
+        let restored = Entity::new(
+            fixture.world.clone(),
+            Vector3::new(0.0, 0.0, 0.0),
+            &EntityType::ARMOR_STAND,
+        );
+        restored.read_nbt_non_mut(&nbt);
+        assert!(restored.has_no_gravity());
+        fixture.shutdown().await;
+    }
 
     #[test]
     fn equipment_break_status_maps_all_slots() {
