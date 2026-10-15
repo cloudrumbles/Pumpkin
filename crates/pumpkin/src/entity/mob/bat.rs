@@ -277,3 +277,38 @@ impl Mob for BatEntity {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use pumpkin_data::entity::EntityType;
+
+    use crate::world::tests::TestWorld;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn no_ai_stops_bat_decisions_but_keeps_roosting_physics() {
+        let fixture = TestWorld::new();
+        let bat = BatEntity::new(Entity::new(
+            fixture.world.clone(),
+            Vector3::new(1.5, 64.25, 1.5),
+            &EntityType::BAT,
+        ));
+        bat.mob_entity.set_no_ai(true);
+        bat.mob_entity
+            .living_entity
+            .entity
+            .velocity
+            .store(Vector3::new(1.0, 2.0, 3.0));
+
+        <BatEntity as Mob>::mob_tick(bat.as_ref(), bat.as_ref());
+
+        assert!(bat.is_roosting());
+        <BatEntity as Mob>::post_tick(bat.as_ref());
+        assert_eq!(
+            bat.mob_entity.living_entity.entity.velocity.load(),
+            Vector3::new(0.0, 0.0, 0.0)
+        );
+        fixture.shutdown().await;
+    }
+}
