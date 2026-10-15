@@ -9,6 +9,7 @@ from unittest.mock import patch
 
 from tools.ironore.qualify import (
     COMMAND_WAIT_SECONDS,
+    FUNCTION_BLOCK_FIXTURES,
     CommandResult,
     Deadline,
     NbtReader,
@@ -25,6 +26,7 @@ from tools.ironore.qualify import (
     entity_data_command,
     parse_nbt_bool,
     parse_position,
+    parse_query_bool,
     read_region_chunk,
     write_pumpkin_config,
     write_vanilla_config,
@@ -148,6 +150,31 @@ class CodecTests(unittest.TestCase):
         self.assertTrue(parse_nbt_bool(output, "NoAI"))
         self.assertFalse(parse_nbt_bool(output, "NoGravity"))
         self.assertIsNone(parse_nbt_bool(output, "PersistenceRequired"))
+
+    def test_path_boolean_queries_are_parsed_independently(self) -> None:
+        enabled = CommandResult(
+            "data get entity @e[...] NoAI",
+            ("Bat has the following entity data: 1b",),
+        )
+        disabled = CommandResult(
+            "data get entity @e[...] NoGravity",
+            ("Bat has the following entity data: 0b",),
+        )
+        root = CommandResult(
+            "data get entity @e[...]",
+            ("Bat has data: {OnGround: 1b, NoGravity: 0b}",),
+        )
+        self.assertTrue(parse_query_bool(enabled, "NoAI"))
+        self.assertFalse(parse_query_bool(disabled, "NoGravity"))
+        self.assertFalse(parse_query_bool(root, "NoGravity"))
+        self.assertIsNone(parse_query_bool(root, "NoAI"))
+
+    def test_function_block_fixtures_are_unique_in_the_forced_chunk(self) -> None:
+        positions = [fixture.position for fixture in FUNCTION_BLOCK_FIXTURES]
+        blocks = [fixture.block_name for fixture in FUNCTION_BLOCK_FIXTURES]
+        self.assertEqual(len(positions), len(set(positions)))
+        self.assertEqual(len(blocks), len(set(blocks)))
+        self.assertEqual({(x // 16, z // 16) for x, _, z in positions}, {(1, 1)})
 
     def test_syntax_error_echo_cannot_satisfy_fixture_marker(self) -> None:
         results = Results()
