@@ -20,9 +20,11 @@ artifacts.
 - Persist runtime clock values through save, shutdown, unload and restart.
 - Ignore superseded teleport acknowledgements while retaining the current request.
 - Remove both live and serialized block-entity records when a container is removed.
-- Read and save `NoGravity`, and honor `NoAI` for bat decisions.
+- Read and save `NoGravity`, and honor `NoAI` for bat and generic mob decisions.
 - Parse namespaced function IDs and validated block-state properties for
   `/setblock` and `/fill`.
+- Merge repeated command branches so entity and block `/data` queries remain
+  reachable alongside storage queries.
 
 Regression tests accompany these changes. A passing build or unit test does not
 establish survival parity or compatibility with vanilla saves.

@@ -10,6 +10,7 @@ use crate::source::{CommandSource, DummySource};
 use crate::suggestion::provider::SuggestionProvider;
 use rustc_hash::FxHashMap;
 use std::borrow::Cow;
+use std::collections::hash_map::Entry;
 use std::sync::Arc;
 
 /// Represents an intermediate struct for
@@ -45,6 +46,33 @@ impl<S: CommandSource> CommonArgumentBuilder<S> {
 impl<S: CommandSource> Default for CommonArgumentBuilder<S> {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+fn merge_argument<S: CommandSource>(
+    arguments: &mut FxHashMap<String, DetachedNode<S>>,
+    incoming: DetachedNode<S>,
+) {
+    match arguments.entry(incoming.name()) {
+        Entry::Vacant(entry) => {
+            entry.insert(incoming);
+        }
+        Entry::Occupied(mut entry) => {
+            let incoming = incoming.decompose();
+            let (owned, children) = match entry.get_mut() {
+                DetachedNode::Literal(node) => (&mut node.owned, &mut node.children),
+                DetachedNode::Argument(node) => (&mut node.owned, &mut node.children),
+                DetachedNode::Command(node) => (&mut node.owned, &mut node.children),
+            };
+            // Match Tree's attached-node merge: retain the original node's
+            // requirements and metadata, replace a supplied executor, merge children.
+            if let Some(command) = incoming.owned.command {
+                owned.command = Some(command);
+            }
+            for (_, child) in incoming.children {
+                merge_argument(children, child);
+            }
+        }
     }
 }
 
@@ -252,7 +280,7 @@ macro_rules! impl_boilerplate_argument_builder {
                 "Cannot add a CommandDetachedNode as a child of a builder"
             );
 
-            self.common.arguments.insert(node.name(), node);
+            merge_argument(&mut self.common.arguments, node);
             self
         }
 
@@ -478,9 +506,11 @@ mod test {
     use crate::argument_types::core::double::DoubleArgumentType;
     use crate::argument_types::core::integer::IntegerArgumentType;
     use crate::argument_types::core::string::StringArgumentType;
+    use crate::context::command_context::CommandContext;
     use crate::errors::error_types;
     use crate::node::Redirection;
     use crate::node::attached::AttachedNode;
+    use crate::node::dispatcher::CommandDispatcher;
     use crate::node::tree::Tree;
     use crate::source::DummySource;
     use crate::string_reader::StringReader;
@@ -542,6 +572,75 @@ mod test {
 
         let node = builder.build();
         assert_eq!(node.children.len(), 2);
+    }
+
+    #[test]
+    fn repeated_branches_preserve_nested_executors() {
+        let mut dispatcher = CommandDispatcher::new();
+        dispatcher.register(
+            command("data", "Regression fixture")
+                .then(literal("get").then(
+                    literal("entity").then(literal("Pos").executes(|_: &CommandContext| Ok(1))),
+                ))
+                .then(literal("get").then(literal("block").executes(|_: &CommandContext| Ok(2))))
+                .then(literal("get").then(
+                    literal("entity").then(literal("NoAI").executes(|_: &CommandContext| Ok(3))),
+                )),
+        );
+        let source = DummySource::dummy();
+        assert_eq!(
+            dispatcher.execute_input("data get entity Pos", &source),
+            Ok(1)
+        );
+        assert_eq!(dispatcher.execute_input("data get block", &source), Ok(2));
+        assert_eq!(
+            dispatcher.execute_input("data get entity NoAI", &source),
+            Ok(3)
+        );
+    }
+
+    #[test]
+    fn repeated_argument_preserves_children_and_replaces_only_present_executor() {
+        let mut dispatcher = CommandDispatcher::new();
+        dispatcher.register(
+            command("test", "Regression fixture")
+                .then(
+                    argument("value", IntegerArgumentType::any())
+                        .executes(|_: &CommandContext| Ok(1))
+                        .then(literal("old").executes(|_: &CommandContext| Ok(2))),
+                )
+                .then(
+                    argument("value", IntegerArgumentType::any())
+                        .executes(|_: &CommandContext| Ok(3)),
+                )
+                .then(
+                    argument("value", IntegerArgumentType::any())
+                        .then(literal("new").executes(|_: &CommandContext| Ok(4))),
+                ),
+        );
+        let source = DummySource::dummy();
+        assert_eq!(dispatcher.execute_input("test 5", &source), Ok(3));
+        assert_eq!(dispatcher.execute_input("test 5 old", &source), Ok(2));
+        assert_eq!(dispatcher.execute_input("test 5 new", &source), Ok(4));
+    }
+
+    #[test]
+    fn repeated_branch_retains_original_requirement() {
+        let mut dispatcher = CommandDispatcher::new();
+        dispatcher.register(
+            command("test", "Regression fixture")
+                .then(
+                    literal("guarded")
+                        .requires(|_: &DummySource| false)
+                        .executes(|_: &CommandContext| Ok(1)),
+                )
+                .then(literal("guarded").executes(|_: &CommandContext| Ok(2))),
+        );
+        assert!(
+            dispatcher
+                .execute_input("test guarded", &DummySource::dummy())
+                .is_err()
+        );
     }
 
     #[test]
