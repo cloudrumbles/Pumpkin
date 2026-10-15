@@ -1171,6 +1171,11 @@ def write_vanilla_config(run_dir: Path, port: int) -> None:
 def parse_position(text: str) -> tuple[float, float, float] | None:
     import re
 
+    position = re.search(r'(?<![\w])"?Pos"?\s*:\s*', text)
+    if position is not None:
+        text = text[position.end() :]
+    elif "{" in text:
+        return None
     match = re.search(
         r"\[\s*(-?\d+(?:\.\d+)?)[dDfF]?,\s*"
         r"(-?\d+(?:\.\d+)?)[dDfF]?,\s*"
@@ -1220,16 +1225,16 @@ def command_check(
     command_result: CommandResult,
     success_marker: str,
 ) -> None:
-    if success_marker in command_result.text:
-        results.set(
-            name, "pass", f"{command_result.command!r} emitted its fixture marker"
-        )
-    elif command_result.looks_unsupported:
+    if command_result.looks_unsupported:
         results.set(
             name,
             "unsupported",
             f"backend rejected {command_result.command!r}",
             output=command_result.text[-2000:],
+        )
+    elif success_marker in command_result.text:
+        results.set(
+            name, "pass", f"{command_result.command!r} emitted its fixture marker"
         )
     else:
         results.set(
@@ -1418,13 +1423,13 @@ class Qualification:
             self.results,
             "datapack_namespaced_function",
             self.server.run_command("function ironore:namespaced"),
-            "ironore:namespaced",
+            "/function",
         )
         command_check(
             self.results,
             "datapack_default_function",
             self.server.run_command("function default"),
-            "default",
+            "/datapack",
         )
 
         setblock_command = self.server.run_command(
