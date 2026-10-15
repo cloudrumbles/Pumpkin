@@ -655,31 +655,64 @@ impl World {
         }
     }
 
-    /// Serializes the live block entities of a chunk back into that chunk's block
-    /// entity data. The live map is the source of truth while a chunk is loaded -
-    /// `get_block_entity` takes the saved NBT out of the chunk when it wakes an
-    /// entity up - so this has to run before the chunk is dropped, or everything
-    /// the entity did since it was loaded is lost.
+    /// Serializes the live block entities of a chunk back into its saved NBT snapshot.
+    /// The pending map's mutex orders promotion, updates, removal, and saves for the
+    /// chunk so a stale save cannot recreate an entity after it is removed.
     fn save_block_entities(&self, chunk_pos: Vector2<i32>) {
+        self.level.read_chunk_sync(&chunk_pos, |chunk| {
+            let mut pending = chunk
+                .pending_block_entities
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if self.save_block_entities_locked(chunk_pos, &mut pending) {
+                chunk.mark_dirty(true);
+            }
+        });
+    }
+
+    fn save_block_entities_locked(
+        &self,
+        chunk_pos: Vector2<i32>,
+        pending: &mut FxHashMap<BlockPos, NbtCompound>,
+    ) -> bool {
         let Some(block_entities) = self
             .block_entities
             .get(&chunk_pos)
-            .map(|chunk_block_entities| chunk_block_entities.values().cloned().collect::<Vec<_>>())
+            .map(|entities| entities.values().cloned().collect::<Vec<_>>())
         else {
-            return;
+            return false;
         };
 
         for block_entity in block_entities {
+            let position = block_entity.get_position();
             let mut nbt = NbtCompound::new();
             block_entity.write_internal(&mut nbt);
-            if let Some(custom_data) = self
-                .custom_block_entity_data
-                .get(&block_entity.get_position())
+            if let Some(custom_data) = self.custom_block_entity_data.get(&position)
                 && !custom_data.is_empty()
             {
                 nbt.put_compound("PumpkinCustomData", custom_data.clone());
             }
-            self.add_block_entity_nbt(block_entity.get_position(), &nbt);
+            pending.insert(position, nbt);
+        }
+        true
+    }
+
+    fn unload_block_entities(&self, chunk_pos: Vector2<i32>) {
+        if self
+            .level
+            .read_chunk_sync(&chunk_pos, |chunk| {
+                let mut pending = chunk
+                    .pending_block_entities
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                if self.save_block_entities_locked(chunk_pos, &mut pending) {
+                    chunk.mark_dirty(true);
+                }
+                self.block_entities.remove(&chunk_pos);
+            })
+            .is_none()
+        {
+            self.block_entities.remove(&chunk_pos);
         }
     }
 
@@ -5171,8 +5204,7 @@ impl World {
         }
 
         for chunk_pos in &chunks_set {
-            self.save_block_entities(*chunk_pos);
-            self.block_entities.remove(chunk_pos);
+            self.unload_block_entities(*chunk_pos);
         }
     }
 
@@ -6294,30 +6326,36 @@ impl World {
             return Some(entity);
         }
 
-        let nbt = self
-            .level
+        self.level
             .read_chunk_sync(&chunk_pos, |chunk| {
-                chunk
+                let pending = chunk
                     .pending_block_entities
                     .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner)
-                    .get(block_pos)
-                    .cloned()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                if let Some(entity) = self
+                    .block_entities
+                    .get(&chunk_pos)
+                    .and_then(|entities| entities.get(block_pos).cloned())
+                {
+                    return Some(entity);
+                }
+
+                let nbt = pending.get(block_pos)?;
+                if let Some(custom_data) = nbt
+                    .get_compound("PumpkinCustomData")
+                    .or_else(|| nbt.get_compound("BukkitValues"))
+                {
+                    self.custom_block_entity_data
+                        .insert(*block_pos, custom_data.clone());
+                }
+                let entity = block_entity_from_nbt(nbt)?;
+                self.block_entities
+                    .entry(chunk_pos)
+                    .or_default()
+                    .insert(*block_pos, entity.clone());
+                Some(entity)
             })
-            .flatten()?;
-        if let Some(custom_data) = nbt
-            .get_compound("PumpkinCustomData")
-            .or_else(|| nbt.get_compound("BukkitValues"))
-        {
-            self.custom_block_entity_data
-                .insert(*block_pos, custom_data.clone());
-        }
-        let entity = block_entity_from_nbt(&nbt)?;
-        self.block_entities
-            .entry(chunk_pos)
-            .or_default()
-            .insert(*block_pos, entity.clone());
-        Some(entity)
+            .flatten()
     }
 
     fn bedrock_block_entity_data(
@@ -6396,34 +6434,54 @@ impl World {
             );
         }
 
-        self.block_entities
-            .entry(chunk_pos)
-            .or_default()
-            .insert(block_pos, block_entity);
-
-        if let Some(nbt) = block_entity_nbt {
-            let mut full_nbt = nbt;
-            full_nbt.put_string("id", entity_id);
-            full_nbt.put_int("x", block_pos.0.x);
-            full_nbt.put_int("y", block_pos.0.y);
-            full_nbt.put_int("z", block_pos.0.z);
-            self.add_block_entity_nbt(block_pos, &full_nbt);
-        }
-
-        self.level.read_chunk_sync(&chunk_pos, |chunk| {
-            chunk.mark_dirty(true);
+        let full_nbt = block_entity_nbt.map(|mut nbt| {
+            nbt.put_string("id", entity_id);
+            nbt.put_int("x", block_pos.0.x);
+            nbt.put_int("y", block_pos.0.y);
+            nbt.put_int("z", block_pos.0.z);
+            nbt
         });
+
+        let block_entity_for_loaded_chunk = block_entity.clone();
+        if self
+            .level
+            .read_chunk_sync(&chunk_pos, |chunk| {
+                let mut pending = chunk
+                    .pending_block_entities
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                self.block_entities
+                    .entry(chunk_pos)
+                    .or_default()
+                    .insert(block_pos, block_entity_for_loaded_chunk.clone());
+                if let Some(nbt) = &full_nbt {
+                    pending.insert(block_pos, nbt.clone());
+                }
+                chunk.mark_dirty(true);
+            })
+            .is_none()
+        {
+            self.block_entities
+                .entry(chunk_pos)
+                .or_default()
+                .insert(block_pos, block_entity);
+        }
     }
 
     pub(crate) fn add_block_entity_nbt(&self, block_pos: BlockPos, nbt: &NbtCompound) {
         if self
             .level
             .read_chunk_sync(&block_pos.chunk_position(), |chunk| {
-                chunk
+                let mut pending = chunk
                     .pending_block_entities
                     .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner)
-                    .insert(block_pos, nbt.clone());
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                pending.insert(block_pos, nbt.clone());
+                self.custom_block_entity_data.remove(&block_pos);
+                if let Some(mut entities) = self.block_entities.get_mut(&block_pos.chunk_position())
+                {
+                    entities.remove(&block_pos);
+                }
                 chunk.mark_dirty(true);
             })
             .is_some()
@@ -6435,20 +6493,32 @@ impl World {
 
     pub fn remove_block_entity(&self, block_pos: &BlockPos) {
         let chunk_pos = block_pos.chunk_position();
-        let removed =
+        let remove_live = || {
             self.block_entities
                 .get_mut(&chunk_pos)
-                .is_some_and(|mut chunk_block_entities| {
-                    chunk_block_entities.remove(block_pos).is_some()
-                });
+                .is_some_and(|mut entities| entities.remove(block_pos).is_some())
+        };
+        let removed = self
+            .level
+            .read_chunk_sync(&chunk_pos, |chunk| {
+                let mut pending = chunk
+                    .pending_block_entities
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                let removed_live = remove_live();
+                let removed_pending = pending.remove(block_pos).is_some();
+                let removed = removed_live || removed_pending;
+                if removed {
+                    chunk.mark_dirty(true);
+                }
+                removed
+            })
+            .unwrap_or_else(remove_live);
         if removed {
             self.custom_block_entity_data.remove(block_pos);
             // Drop the chunk's map once its last block entity is gone.
             self.block_entities
                 .remove_if(&chunk_pos, |_, entities| entities.is_empty());
-            self.level.read_chunk_sync(&chunk_pos, |chunk| {
-                chunk.mark_dirty(true);
-            });
         }
     }
 
@@ -6481,27 +6551,47 @@ impl World {
         let chunk_pos = block_pos.chunk_position();
         let block_entity_nbt = block_entity.chunk_data_nbt();
 
-        if let Some(nbt) = &block_entity_nbt {
+        let packet = block_entity_nbt.as_ref().map(|nbt| {
             let bytes = pumpkin_nbt::Nbt::from(nbt.clone()).write_unnamed();
-            self.broadcast_to_chunk(
-                chunk_pos,
-                &CBlockEntityData::new(
-                    block_entity.get_position(),
-                    VarInt(block_entity.get_id() as i32),
-                    bytes.as_ref().into(),
-                ),
-            );
-            let mut full_nbt = nbt.clone();
-            full_nbt.put_string("id", block_entity.resource_location().to_string());
-            let pos = block_entity.get_position();
-            full_nbt.put_int("x", pos.0.x);
-            full_nbt.put_int("y", pos.0.y);
-            full_nbt.put_int("z", pos.0.z);
-            self.add_block_entity_nbt(block_pos, &full_nbt);
-        }
-        self.level.read_chunk_sync(&chunk_pos, |chunk| {
-            chunk.mark_dirty(true);
+            CBlockEntityData::new(
+                block_entity.get_position(),
+                VarInt(block_entity.get_id() as i32),
+                bytes.as_ref().into(),
+            )
         });
+        let full_nbt = block_entity_nbt.map(|mut nbt| {
+            nbt.put_string("id", block_entity.resource_location().to_string());
+            nbt.put_int("x", block_pos.0.x);
+            nbt.put_int("y", block_pos.0.y);
+            nbt.put_int("z", block_pos.0.z);
+            nbt
+        });
+
+        let updated = self
+            .level
+            .read_chunk_sync(&chunk_pos, |chunk| {
+                let mut pending = chunk
+                    .pending_block_entities
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                let is_current = self
+                    .block_entities
+                    .get(&chunk_pos)
+                    .and_then(|entities| entities.get(&block_pos).cloned())
+                    .is_some_and(|current| Arc::ptr_eq(&current, block_entity));
+                if !is_current {
+                    return false;
+                }
+                if let Some(nbt) = &full_nbt {
+                    pending.insert(block_pos, nbt.clone());
+                }
+                chunk.mark_dirty(true);
+                true
+            })
+            .unwrap_or(false);
+        if updated && let Some(packet) = packet {
+            self.broadcast_to_chunk(chunk_pos, &packet);
+        }
     }
 
     #[must_use]
@@ -7706,6 +7796,78 @@ pub(crate) mod tests {
                 .contains_key(&position)
         );
         assert!(chunk.is_dirty());
+        fixture.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn removing_a_live_block_entity_also_clears_its_saved_nbt() {
+        let fixture = TestWorld::new();
+        let position = BlockPos::new(5, 64, 7);
+        let chunk_position = position.chunk_position();
+        let chunk = ChunkData::empty_sync(chunk_position.x, chunk_position.y);
+        let mut nbt = NbtCompound::new();
+        nbt.put_string("id", "minecraft:chest".to_string());
+        nbt.put_int("x", position.0.x);
+        nbt.put_int("y", position.0.y);
+        nbt.put_int("z", position.0.z);
+        chunk
+            .pending_block_entities
+            .lock()
+            .unwrap()
+            .insert(position, nbt);
+        fixture
+            .level
+            .loaded_chunks
+            .insert(chunk_position, chunk.clone());
+        assert!(fixture.world.get_block_entity(&position).is_some());
+
+        fixture.world.remove_block_entity(&position);
+
+        assert!(fixture.world.get_block_entity(&position).is_none());
+        assert!(
+            !chunk
+                .pending_block_entities
+                .lock()
+                .unwrap()
+                .contains_key(&position)
+        );
+        assert!(chunk.is_dirty());
+        fixture.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn replacing_saved_nbt_invalidates_the_live_block_entity() {
+        let fixture = TestWorld::new();
+        let position = BlockPos::new(5, 64, 7);
+        let chunk_position = position.chunk_position();
+        let chunk = ChunkData::empty_sync(chunk_position.x, chunk_position.y);
+        let block_entity_nbt = |id: &str| {
+            let mut nbt = NbtCompound::new();
+            nbt.put_string("id", id.to_string());
+            nbt.put_int("x", position.0.x);
+            nbt.put_int("y", position.0.y);
+            nbt.put_int("z", position.0.z);
+            nbt
+        };
+        chunk
+            .pending_block_entities
+            .lock()
+            .unwrap()
+            .insert(position, block_entity_nbt("minecraft:chest"));
+        fixture
+            .level
+            .loaded_chunks
+            .insert(chunk_position, chunk.clone());
+        let original = fixture.world.get_block_entity(&position).unwrap();
+        assert_eq!(original.resource_location(), "minecraft:chest");
+
+        fixture
+            .world
+            .add_block_entity_nbt(position, &block_entity_nbt("minecraft:furnace"));
+
+        let replacement = fixture.world.get_block_entity(&position).unwrap();
+        assert_eq!(replacement.resource_location(), "minecraft:furnace");
+        assert!(!Arc::ptr_eq(&original, &replacement));
         fixture.shutdown().await;
     }
 

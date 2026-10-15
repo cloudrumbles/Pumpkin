@@ -236,6 +236,9 @@ impl Mob for BatEntity {
         let pos = entity.pos.load();
 
         self.tick_ambient_sound(&world, &pos);
+        if self.mob_entity.is_no_ai() {
+            return;
+        }
 
         if self.is_roosting() {
             self.tick_roosting(&world, &above_pos, &pos);
