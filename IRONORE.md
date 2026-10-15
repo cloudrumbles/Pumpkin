@@ -51,6 +51,22 @@ The official server JAR used for runtime comparison has SHA-256
 Keep Java source, game assets, test saves and executable artifacts outside git.
 Use disposable worlds for save/reopen and protocol tests.
 
+## Paused qualification checkpoint (2026-10-15)
+
+Source `2ad2dc055` passed 85 command tests and five doctests, including three
+regressions that failed before the repeated-branch repair. The corrected
+qualification harness passed 17 Python tests, strict typing and lint checks,
+and all 22 system checks against official vanilla 26.3.
+
+The earlier fork revision `987e8de99` passed 344 server library tests and six
+clock regressions. Its staged development executable retained frozen time 6000
+across restart and kept the protocol client connected through queued old/new
+teleport acknowledgements. That runtime run failed overall; fixture setup and
+unsupported observations prevented qualification of the remaining behaviors.
+
+The latest source build and queued server-test rerun were stopped at the user's
+request. Current-pin runtime and native client acceptance remain pending.
+
 ## Updating upstream
 
 Preserve upstream history and review changes on a separate branch. Before
