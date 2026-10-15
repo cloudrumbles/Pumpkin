@@ -1,40 +1,29 @@
 #[allow(clippy::wildcard_imports)]
 use super::*;
 
+mod state;
+use state::{Confirmation, confirm};
+
 impl JavaClient {
     pub fn handle_confirm_teleport(&self, player: &Player, confirm_teleport: &SConfirmTeleport) {
-        enum TeleportResult {
-            Success,
-            WrongId,
-            NotTeleporting,
-        }
-
         let result = {
             let mut awaiting_teleport = player
                 .awaiting_teleport
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
-            if let Some((id, position)) = awaiting_teleport.as_ref() {
-                if id == &confirm_teleport.teleport_id {
-                    // We should set the position now to what we requested in the teleport packet.
-                    // This may fix issues when the client sends the position while being teleported.
-                    player.get_entity().set_pos(*position);
-                    *awaiting_teleport = None;
-                    TeleportResult::Success
-                } else {
-                    TeleportResult::WrongId
-                }
-            } else {
-                TeleportResult::NotTeleporting
+            let result = confirm(&mut awaiting_teleport, &confirm_teleport.teleport_id);
+            if let Confirmation::Accepted(position) = result {
+                player.get_entity().set_pos(position);
             }
+            result
         };
 
         match result {
-            TeleportResult::Success => {}
-            TeleportResult::WrongId => {
+            Confirmation::Accepted(_) | Confirmation::Stale => {}
+            Confirmation::WrongId => {
                 self.try_kick(&TextComponent::text("Wrong teleport id"));
             }
-            TeleportResult::NotTeleporting => {
+            Confirmation::NotTeleporting => {
                 self.try_kick(&TextComponent::text(
                     "Send Teleport confirm, but we did not teleport",
                 ));
