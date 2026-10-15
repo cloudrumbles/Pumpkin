@@ -8,6 +8,8 @@ from pathlib import Path
 
 from tools.ironore.qualify import (
     NbtReader,
+    NbtValue,
+    block_state_from_chunk,
     decode_varint_bytes,
     encode_varint,
     parse_position,
@@ -69,6 +71,54 @@ class CodecTests(unittest.TestCase):
             path.write_bytes(bytes(header) + record + bytes(4096 - len(record)))
             root = read_region_chunk(path, 0, 0)
         self.assertEqual(root["block_entities"], [])
+
+    def test_padded_anvil_palette_decodes_exact_block_properties(self) -> None:
+        x, y, z = 21, 100, 21
+        flattened = (y % 16) * 256 + (z % 16) * 16 + (x % 16)
+        entries_per_word = 16
+        word_index, entry_index = divmod(flattened, entries_per_word)
+        packed: list[NbtValue] = [0] * (word_index + 1)
+        packed[word_index] = 2 << (entry_index * 4)
+        palettes: tuple[list[NbtValue], ...] = (
+            [
+                {"Name": "minecraft:air"},
+                {"Name": "minecraft:stone"},
+                {
+                    "Name": "minecraft:oak_stairs",
+                    "Properties": {
+                        "facing": "east",
+                        "half": "top",
+                        "shape": "straight",
+                    },
+                },
+            ],
+            [
+                {"": "minecraft:air"},
+                {"": "minecraft:stone"},
+                {
+                    "id": "minecraft:oak_stairs",
+                    "properties": {
+                        "facing": "east",
+                        "half": "top",
+                        "shape": "straight",
+                    },
+                },
+            ],
+        )
+        for palette in palettes:
+            with self.subTest(palette=palette):
+                chunk: dict[str, NbtValue] = {
+                    "sections": [
+                        {
+                            "Y": y // 16,
+                            "block_states": {"palette": palette, "data": packed},
+                        }
+                    ]
+                }
+                state = block_state_from_chunk(chunk, x, y, z)
+                self.assertEqual(state.name, "minecraft:oak_stairs")
+                self.assertEqual(state.properties["facing"], "east")
+                self.assertEqual(state.properties["half"], "top")
 
     def test_position_parser_ignores_log_prefix_numbers(self) -> None:
         line = "[12:34:56 INFO]: IronoreBot has data: [20.5d, 100.0d, -2.25d]"
