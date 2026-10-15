@@ -113,6 +113,12 @@ class Teleport:
 
 
 @dataclass(frozen=True)
+class StoredBlockState:
+    name: str
+    properties: dict[str, str]
+
+
+@dataclass(frozen=True)
 class PacketIds:
     login_finished: int
     login_compression: int
@@ -887,6 +893,88 @@ def chest_absent_from_chunk(run_dir: Path, x: int, y: int, z: int) -> tuple[bool
     return True, find_region(run_dir, x // 16, z // 16)
 
 
+def _decode_palette_entry(value: NbtValue) -> StoredBlockState:
+    if isinstance(value, str):
+        return StoredBlockState(value, {})
+    if not isinstance(value, dict):
+        raise QualificationError(
+            "block-state palette entry is not a string or compound"
+        )
+
+    # Pumpkin writes the established Name/Properties shape. Vanilla 26.3 uses
+    # id/properties when any entry has properties, with an empty-name key for
+    # property-free entries in that compound palette.
+    raw_name = value.get("Name", value.get("id", value.get("")))
+    if not isinstance(raw_name, str):
+        raise QualificationError("block-state palette entry has no block identifier")
+    raw_properties = value.get("Properties", value.get("properties", {}))
+    if not isinstance(raw_properties, dict):
+        raise QualificationError("block-state palette Properties is not a compound")
+    properties: dict[str, str] = {}
+    for key, item in raw_properties.items():
+        if not isinstance(item, str):
+            raise QualificationError(f"block-state property {key!r} is not a string")
+        properties[key] = item
+    return StoredBlockState(raw_name, properties)
+
+
+def block_state_from_chunk(
+    root: dict[str, NbtValue], x: int, y: int, z: int
+) -> StoredBlockState:
+    sections = root.get("sections")
+    if not isinstance(sections, list):
+        raise QualificationError("chunk NBT has no sections list")
+    section_y = y // 16
+    section: dict[str, NbtValue] | None = None
+    for candidate in sections:
+        if isinstance(candidate, dict) and candidate.get("Y") == section_y:
+            section = candidate
+            break
+    if section is None:
+        raise QualificationError(f"chunk NBT has no section Y={section_y}")
+    block_states = section.get("block_states")
+    if not isinstance(block_states, dict):
+        raise QualificationError(f"section Y={section_y} has no block_states compound")
+    palette = block_states.get("palette")
+    if not isinstance(palette, list) or not palette:
+        raise QualificationError(f"section Y={section_y} has no block-state palette")
+
+    palette_index = 0
+    if len(palette) > 1:
+        data = block_states.get("data")
+        if not isinstance(data, list) or not all(
+            isinstance(word, int) for word in data
+        ):
+            raise QualificationError(
+                "heterogeneous block-state palette has no long data"
+            )
+        bits_per_entry = max(4, (len(palette) - 1).bit_length())
+        entries_per_word = 64 // bits_per_entry
+        flattened = (y % 16) * 256 + (z % 16) * 16 + (x % 16)
+        word_index, entry_index = divmod(flattened, entries_per_word)
+        if word_index >= len(data):
+            raise QualificationError(
+                "block-state packed data is shorter than the section"
+            )
+        word = cast(int, data[word_index]) & 0xFFFFFFFFFFFFFFFF
+        palette_index = (word >> (entry_index * bits_per_entry)) & (
+            (1 << bits_per_entry) - 1
+        )
+        if palette_index >= len(palette):
+            raise QualificationError(
+                f"block-state palette index {palette_index} is out of range"
+            )
+    return _decode_palette_entry(palette[palette_index])
+
+
+def read_block_state(
+    run_dir: Path, x: int, y: int, z: int
+) -> tuple[StoredBlockState, Path]:
+    region = find_region(run_dir, x // 16, z // 16)
+    root = read_region_chunk(region, x // 16, z // 16)
+    return block_state_from_chunk(root, x, y, z), region
+
+
 def free_loopback_port() -> int:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
         sock.bind(("127.0.0.1", 0))
@@ -1111,6 +1199,8 @@ class Qualification:
         self.packet_ids = load_packet_ids(self.repo)
         self.log_path = self.run_dir / "harness-server.log"
         self.created_run_dir = False
+        self.setblock_probe: tuple[CommandResult, CommandResult] | None = None
+        self.fill_probe: tuple[CommandResult, CommandResult] | None = None
 
     def run(self) -> int:
         if self.run_dir.exists():
@@ -1278,38 +1368,26 @@ class Qualification:
             "__IRONORE_FUNCTION_DEFAULT__",
         )
 
-        self.server.run_command(
+        setblock_command = self.server.run_command(
             "setblock 21 100 21 minecraft:oak_stairs[facing=east,half=top]"
         )
-        command_check(
-            self.results,
-            "setblock_properties",
-            self.server.run_command(
-                "execute if block 21 100 21 minecraft:oak_stairs[facing=east,half=top] "
-                "run say __IRONORE_SETBLOCK_OK__"
-            ),
-            "__IRONORE_SETBLOCK_OK__",
+        setblock_marker = self.server.run_command(
+            "execute if block 21 100 21 minecraft:oak_stairs[facing=east,half=top] "
+            "run say __IRONORE_SETBLOCK_OK__"
         )
-        self.server.run_command(
+        self.setblock_probe = (setblock_command, setblock_marker)
+        fill_command = self.server.run_command(
             "fill 22 100 21 23 100 22 minecraft:oak_stairs[facing=west,half=bottom]"
         )
-        command_check(
-            self.results,
-            "fill_properties",
-            self.server.run_command(
-                "execute if block 23 100 22 minecraft:oak_stairs[facing=west,half=bottom] "
-                "run say __IRONORE_FILL_OK__"
-            ),
-            "__IRONORE_FILL_OK__",
+        fill_marker = self.server.run_command(
+            "execute if block 23 100 22 minecraft:oak_stairs[facing=west,half=bottom] "
+            "run say __IRONORE_FILL_OK__"
         )
+        self.fill_probe = (fill_command, fill_marker)
 
         self._bat_first_run()
 
-        clock_command = (
-            "gamerule minecraft:advance_time false"
-            if self.backend == "vanilla"
-            else "gamerule doDaylightCycle false"
-        )
+        clock_command = "gamerule minecraft:advance_time false"
         clock_rule = self.server.run_command(clock_command)
         clock_set = self.server.run_command("time set 6000")
         if clock_rule.looks_unsupported or clock_set.looks_unsupported:
@@ -1342,36 +1420,28 @@ class Qualification:
         )
 
         chest_set = self.server.run_command("setblock 24 100 24 minecraft:chest")
-        chest_data = self.server.run_command(
-            "data merge block 24 100 24 {ironore_probe:1b}"
-        )
-        chest_data_query = self.server.run_command(
-            "data get block 24 100 24 ironore_probe"
-        )
+        chest_data_query = self.server.run_command("data get block 24 100 24")
         chest_remove = self.server.run_command("setblock 24 100 24 minecraft:air")
         chest_absent = self.server.run_command(
             "execute if block 24 100 24 minecraft:air run say __IRONORE_CHEST_REMOVED__"
         )
         if any(
             result.looks_unsupported
-            for result in (chest_set, chest_data, chest_data_query, chest_remove)
+            for result in (chest_set, chest_data_query, chest_remove)
         ):
             self.results.set(
                 "chest_removed_before_save",
                 "unsupported",
                 "backend rejected a chest/NBT fixture command",
-                output=(
-                    chest_set.text
-                    + chest_data.text
-                    + chest_data_query.text
-                    + chest_remove.text
-                )[-2000:],
+                output=(chest_set.text + chest_data_query.text + chest_remove.text)[
+                    -2000:
+                ],
             )
-        elif "1b" not in chest_data_query.text.lower():
+        elif "minecraft:chest" not in chest_data_query.text.lower():
             self.results.set(
                 "chest_removed_before_save",
                 "fail",
-                "chest fixture did not expose the inserted block-entity NBT before removal",
+                "data get block did not identify a chest block entity before removal",
                 output=chest_data_query.text[-2000:],
             )
         else:
@@ -1458,6 +1528,7 @@ class Qualification:
             )
 
     def _offline_checks(self) -> None:
+        self._offline_block_state_checks()
         try:
             clock = persisted_clock(self.run_dir)
             self.results.set(
@@ -1483,6 +1554,104 @@ class Qualification:
             self.results.set("chest_nbt_removed", "unsupported", str(error))
         except (OSError, QualificationError) as error:
             self.results.set("chest_nbt_removed", "fail", str(error))
+
+    def _offline_block_state_checks(self) -> None:
+        self._offline_block_state_check(
+            "setblock_properties",
+            self.setblock_probe,
+            ((21, 100, 21),),
+            {"facing": "east", "half": "top"},
+            "__IRONORE_SETBLOCK_OK__",
+        )
+        self._offline_block_state_check(
+            "fill_properties",
+            self.fill_probe,
+            (
+                (22, 100, 21),
+                (23, 100, 21),
+                (22, 100, 22),
+                (23, 100, 22),
+            ),
+            {"facing": "west", "half": "bottom"},
+            "__IRONORE_FILL_OK__",
+        )
+
+    def _offline_block_state_check(
+        self,
+        name: str,
+        probe: tuple[CommandResult, CommandResult] | None,
+        positions: Sequence[tuple[int, int, int]],
+        expected_properties: dict[str, str],
+        marker: str,
+    ) -> None:
+        if probe is None:
+            self.results.set(name, "unrun", "block-state command fixture did not run")
+            return
+        setup_result, marker_result = probe
+        marker_seen = marker in marker_result.text
+        try:
+            stored: list[tuple[tuple[int, int, int], StoredBlockState, Path]] = []
+            for position in positions:
+                state, region = read_block_state(self.run_dir, *position)
+                stored.append((position, state, region))
+            matches = all(
+                state.name == "minecraft:oak_stairs"
+                and all(
+                    state.properties.get(key) == value
+                    for key, value in expected_properties.items()
+                )
+                for _, state, _ in stored
+            )
+            evidence: dict[str, object] = {
+                "predicate_marker_seen": marker_seen,
+                "stored_states": [
+                    {
+                        "position": list(position),
+                        "name": state.name,
+                        "properties": state.properties,
+                        "region": str(region),
+                    }
+                    for position, state, region in stored
+                ],
+            }
+            if matches:
+                self.results.set(
+                    name,
+                    "pass",
+                    "stopped-world Anvil palette stores the requested stair properties",
+                    **evidence,
+                )
+            elif setup_result.looks_unsupported:
+                self.results.set(
+                    name,
+                    "unsupported",
+                    "backend rejected the property-bearing block command",
+                    command_output=setup_result.text[-2000:],
+                    **evidence,
+                )
+            else:
+                self.results.set(
+                    name,
+                    "fail",
+                    "stopped-world Anvil palette does not store the requested stair properties",
+                    **evidence,
+                )
+        except UnsupportedNbt as error:
+            self.results.set(
+                name,
+                "unsupported",
+                str(error),
+                predicate_marker_seen=marker_seen,
+            )
+        except (OSError, QualificationError) as error:
+            status: Status = "unsupported" if setup_result.looks_unsupported else "fail"
+            self.results.set(
+                name,
+                status,
+                str(error),
+                predicate_marker_seen=marker_seen,
+                command_output=setup_result.text[-2000:],
+            )
 
     def _restart_run(self) -> None:
         try:
