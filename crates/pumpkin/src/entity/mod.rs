@@ -4201,6 +4201,9 @@ impl Entity {
         nbt.put_bool("OnGround", self.on_ground.load(Relaxed));
         nbt.put_bool("Invulnerable", self.invulnerable.load(Relaxed));
         nbt.put_int("PortalCooldown", self.portal_cooldown.load(Relaxed) as i32);
+        if self.has_no_gravity() {
+            nbt.put_bool("NoGravity", true);
+        }
         if self.has_visual_fire.load(Relaxed) {
             nbt.put_bool("HasVisualFire", true);
         }
@@ -4278,6 +4281,7 @@ impl Entity {
             .store(nbt.get_bool("Invulnerable").unwrap_or(false), Relaxed);
         self.portal_cooldown
             .store(nbt.get_int("PortalCooldown").unwrap_or(0) as u32, Relaxed);
+        self.set_has_no_gravity(nbt.get_bool("NoGravity").unwrap_or(false));
         self.has_visual_fire
             .store(nbt.get_bool("HasVisualFire").unwrap_or(false), Relaxed);
         self.frozen_ticks
@@ -4467,6 +4471,9 @@ mod tests {
         );
         restored.read_nbt_non_mut(&nbt);
         assert!(restored.has_no_gravity());
+
+        restored.read_nbt_non_mut(&NbtCompound::new());
+        assert!(!restored.has_no_gravity());
         fixture.shutdown().await;
     }
 
