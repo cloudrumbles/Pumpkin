@@ -120,6 +120,30 @@ class StoredBlockState:
 
 
 @dataclass(frozen=True)
+class FunctionBlockFixture:
+    check_name: str
+    function_id: str
+    position: tuple[int, int, int]
+    block_name: str
+
+
+FUNCTION_BLOCK_FIXTURES = (
+    FunctionBlockFixture(
+        "datapack_namespaced_function",
+        "ironore:namespaced",
+        (26, 100, 26),
+        "minecraft:diamond_block",
+    ),
+    FunctionBlockFixture(
+        "datapack_default_function",
+        "minecraft:default",
+        (27, 100, 26),
+        "minecraft:emerald_block",
+    ),
+)
+
+
+@dataclass(frozen=True)
 class PacketIds:
     login_finished: int
     login_compression: int
@@ -1020,8 +1044,6 @@ def free_loopback_port() -> int:
 
 def write_datapack(run_dir: Path) -> None:
     root = run_dir / "world" / "datapacks" / "ironore_e2e"
-    (root / "data" / "ironore" / "function").mkdir(parents=True)
-    (root / "data" / "minecraft" / "function").mkdir(parents=True)
     pack = {
         "pack": {
             "description": "Ironore disposable qualification fixtures",
@@ -1030,13 +1052,17 @@ def write_datapack(run_dir: Path) -> None:
             "max_format": 121,
         }
     }
+    root.mkdir(parents=True)
     (root / "pack.mcmeta").write_text(json.dumps(pack), encoding="utf-8")
-    (root / "data" / "ironore" / "function" / "namespaced.mcfunction").write_text(
-        "help function\n", encoding="utf-8"
-    )
-    (root / "data" / "minecraft" / "function" / "default.mcfunction").write_text(
-        "help datapack\n", encoding="utf-8"
-    )
+    for fixture in FUNCTION_BLOCK_FIXTURES:
+        namespace, function_name = fixture.function_id.split(":", 1)
+        function_dir = root / "data" / namespace / "function"
+        function_dir.mkdir(parents=True, exist_ok=True)
+        x, y, z = fixture.position
+        (function_dir / f"{function_name}.mcfunction").write_text(
+            f"setblock {x} {y} {z} {fixture.block_name}\n",
+            encoding="utf-8",
+        )
 
 
 def write_pumpkin_config(run_dir: Path, port: int) -> None:
@@ -1212,6 +1238,22 @@ def parse_nbt_bool(text: str, name: str) -> bool | None:
     return match.group(1).lower() in ("1b", "true")
 
 
+def parse_query_bool(result: CommandResult, name: str) -> bool | None:
+    import re
+
+    named = parse_nbt_bool(result.text, name)
+    if named is not None:
+        return named
+    scalar = re.search(
+        r"entity data:\s*(1b|0b|true|false)\s*$",
+        result.text,
+        flags=re.IGNORECASE,
+    )
+    if scalar is None:
+        return None
+    return scalar.group(1).lower() in ("1b", "true")
+
+
 def entity_data_command(
     backend: Literal["pumpkin", "vanilla"], target: str, path: str
 ) -> str:
@@ -1281,6 +1323,7 @@ class Qualification:
         self.packet_ids = load_packet_ids(self.repo)
         self.log_path = self.run_dir / "harness-server.log"
         self.created_run_dir = False
+        self.function_probes: dict[str, CommandResult] = {}
         self.setblock_probe: tuple[CommandResult, CommandResult] | None = None
         self.fill_probe: tuple[CommandResult, CommandResult] | None = None
 
@@ -1458,18 +1501,11 @@ class Qualification:
                 output=position_result.text[-2000:],
             )
 
-        command_check(
-            self.results,
-            "datapack_namespaced_function",
-            self.server.run_command("function ironore:namespaced"),
-            "/function",
-        )
-        command_check(
-            self.results,
-            "datapack_default_function",
-            self.server.run_command("function default"),
-            "/datapack",
-        )
+        for fixture in FUNCTION_BLOCK_FIXTURES:
+            command_name = fixture.function_id.removeprefix("minecraft:")
+            self.function_probes[fixture.check_name] = self.server.run_command(
+                f"function {command_name}"
+            )
 
         setblock_command = self.server.run_command(
             "setblock 21 100 21 minecraft:oak_stairs[facing=east,half=top]"
@@ -1665,10 +1701,8 @@ class Qualification:
         after = parse_position(after_result.text)
         flags = first_no_ai.text + "\n" + first_no_gravity.text
         flags_true = (
-            parse_nbt_bool(flags, "NoAI") is True
-            and parse_nbt_bool(flags, "NoGravity") is True
-            if self.backend == "pumpkin"
-            else flags.lower().count("1b") >= 2 or flags.lower().count("true") >= 2
+            parse_query_bool(first_no_ai, "NoAI") is True
+            and parse_query_bool(first_no_gravity, "NoGravity") is True
         )
         if (
             before is not None
@@ -1694,6 +1728,7 @@ class Qualification:
             )
 
     def _offline_checks(self) -> None:
+        self._offline_function_checks()
         self._offline_block_state_checks()
         try:
             clock = persisted_clock(self.run_dir)
@@ -1720,6 +1755,60 @@ class Qualification:
             self.results.set("chest_nbt_removed", "unsupported", str(error))
         except (OSError, QualificationError) as error:
             self.results.set("chest_nbt_removed", "fail", str(error))
+
+    def _offline_function_checks(self) -> None:
+        for fixture in FUNCTION_BLOCK_FIXTURES:
+            command_result = self.function_probes.get(fixture.check_name)
+            if command_result is None:
+                self.results.set(
+                    fixture.check_name,
+                    "unrun",
+                    "function fixture command did not run",
+                )
+                continue
+            try:
+                state, region = read_block_state(self.run_dir, *fixture.position)
+                evidence: dict[str, object] = {
+                    "position": list(fixture.position),
+                    "stored_name": state.name,
+                    "stored_properties": state.properties,
+                    "expected_name": fixture.block_name,
+                    "region": str(region),
+                    "command_output": command_result.text[-2000:],
+                }
+                if state.name == fixture.block_name:
+                    self.results.set(
+                        fixture.check_name,
+                        "pass",
+                        "stopped-world Anvil state proves the function body ran",
+                        **evidence,
+                    )
+                elif command_result.looks_unsupported:
+                    self.results.set(
+                        fixture.check_name,
+                        "unsupported",
+                        "backend rejected the function fixture command",
+                        **evidence,
+                    )
+                else:
+                    self.results.set(
+                        fixture.check_name,
+                        "fail",
+                        "function body did not place its expected block",
+                        **evidence,
+                    )
+            except UnsupportedNbt as error:
+                self.results.set(fixture.check_name, "unsupported", str(error))
+            except (OSError, QualificationError) as error:
+                status: Status = (
+                    "unsupported" if command_result.looks_unsupported else "fail"
+                )
+                self.results.set(
+                    fixture.check_name,
+                    status,
+                    str(error),
+                    command_output=command_result.text[-2000:],
+                )
 
     def _offline_block_state_checks(self) -> None:
         self._offline_block_state_check(
@@ -1935,11 +2024,8 @@ class Qualification:
         else:
             position = parse_position(bat_pos.text)
             flags_true = (
-                parse_nbt_bool(combined, "NoAI") is True
-                and parse_nbt_bool(combined, "NoGravity") is True
-                if self.backend == "pumpkin"
-                else combined.lower().count("1b") >= 2
-                or combined.lower().count("true") >= 2
+                parse_query_bool(bat_no_ai, "NoAI") is True
+                and parse_query_bool(bat_no_gravity, "NoGravity") is True
             )
             if position is not None and flags_true:
                 self.results.set(
