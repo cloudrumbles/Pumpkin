@@ -48,7 +48,7 @@ development host the selected toolchain is `nightly-2026-08-21`.
 
 ```sh
 cargo +nightly-2026-08-21 test --locked -p pumpkin-command
-cargo +nightly-2026-08-21 test --locked -p pumpkin-world world_clock_tests
+cargo +nightly-2026-08-21 test --locked --lib -p pumpkin-world
 cargo +nightly-2026-08-21 test --locked -p pumpkin --lib
 ```
 
@@ -58,7 +58,7 @@ no incremental compilation and 256 development codegen units. These are QA
 build settings; use a separately measured release build for performance claims.
 
 The local Minecraft 26.3 Java reference is derived from the named game JAR.
-The official server JAR used for runtime comparison has SHA-256
+The official server JAR used as a reference has SHA-256
 `d052f14d7a173734fba553711e5b570162e2f2a313267ee31a21b975a679be64`.
 Keep Java source, game assets, test saves and executable artifacts outside git.
 Use disposable worlds for save/reopen and protocol tests.
@@ -78,6 +78,47 @@ unsupported observations prevented qualification of the remaining behaviors.
 
 The latest source build and queued server-test rerun were stopped at the user's
 request. Current-pin runtime and native client acceptance remain pending.
+
+## Qualification continuation (2026-10-16)
+
+The paused runtime work resumed from fork commit
+`f7e637be76ff256ac5eeb157d4848bfa381af602`. The corrected original harness passed
+all 22 checks against that baseline. New regression suites exposed discarded
+accepted teleport poses, incorrect acknowledgement validation, missing block NBT
+and predicate behavior, and a `/fill destroy` deadlock. These are repaired on
+`ironore/vanilla-parity-20261017`.
+
+The final executable was built from clean source
+`eebbb01de1e40906c4891e10650e0c7823a565fe` with the pinned toolchain and settings
+above. Its SHA-256 is
+`6258f2c10df62754665c3fdfd39fca2e799c27949ec81a66e886957ae00b6d8e`.
+The existing dependency pins and `Cargo.lock` were preserved.
+
+| Validation | Result |
+| --- | --- |
+| Pumpkin server library tests | 354 passed |
+| Command tests and doctests | 93 tests and 5 doctests passed |
+| World library tests, including clock regressions | 231 passed |
+| Python harness tests | 20 passed |
+| Original command, protocol and restart suite | 22 checks passed |
+| Teleport acknowledgement suite | 12 checks passed |
+| Block input, predicate and restart suite | 15 checks passed |
+| Rust formatting and all-target Clippy for the three affected crates | Passed |
+| Strict mypy for the four harness files and Ruff | Passed |
+
+All 49 runtime checks used the same final executable in disposable worlds. The
+full results, commands, baseline observations and build provenance are recorded
+in [the qualification report](tools/ironore/results/java-26.3-20261016.json).
+The [harness README](tools/ironore/README.md) documents how to repeat each suite.
+Cargo still emits an existing future-incompatibility notice for
+`proc-macro-error2 v2.0.1`; Clippy has no remaining diagnostics in the affected
+crates. The test and lint results cover the listed packages and default features.
+
+This continuation inspected official Java 26.3 bytecode and ran Pumpkin; it did
+not launch a vanilla server or accept the Minecraft EULA. The historical vanilla
+run above remains separate evidence. Native client acceptance and the remaining
+parity limits below are still open. This qualification does not advance the
+external Ironore backend pin or establish completion of the full vanilla port.
 
 ## Updating upstream
 

@@ -1,0 +1,1239 @@
+{
+  "schema_version": 1,
+  "title": "Java 26.3 command and protocol qualification",
+  "recorded_at_utc": "2026-10-16T22:55:14.333017+00:00",
+  "source": {
+    "repository": "https://github.com/cloudrumbles/Pumpkin",
+    "branch": "ironore/vanilla-parity-20261017",
+    "baseline_commit": "f7e637be76ff256ac5eeb157d4848bfa381af602",
+    "tested_commit": "eebbb01de1e40906c4891e10650e0c7823a565fe",
+    "clean_checkout_at_build": true,
+    "note": "This report and its documentation are committed after the tested code revision. No code changes are included in that documentation commit."
+  },
+  "target": {
+    "minecraft_version": "26.3",
+    "java_protocol": 777,
+    "pumpkin_version": "0.2.0+26.3-26.51",
+    "pumpkin_data_version": 4903,
+    "vanilla_data_version": 5023
+  },
+  "reference": {
+    "supplied_gist": "https://gist.github.com/cliffano/77a982a7503669c3e1acb0a0cf6127e9",
+    "official_server_jar_url": "https://piston-data.mojang.com/v1/objects/33680f5f2ac32864d6d7cf5e56a705fdb3e05f4c/server.jar",
+    "official_server_jar_sha1": "33680f5f2ac32864d6d7cf5e56a705fdb3e05f4c",
+    "official_server_jar_sha256": "d052f14d7a173734fba553711e5b570162e2f2a313267ee31a21b975a679be64",
+    "official_server_jar_bytes": 62294556,
+    "method": "Inspected Java 25 javap output for ServerGamePacketListenerImpl, BlockInput, FillCommand, and BlockStateParser from the named official JAR.",
+    "vanilla_runtime_run_this_session": false,
+    "note": "The historical 2026-10-15 vanilla qualification is documented separately in IRONORE.md. This continuation executed Pumpkin only; no Minecraft EULA was accepted."
+  },
+  "build": {
+    "source_commit": "eebbb01de1e40906c4891e10650e0c7823a565fe",
+    "source_dirty": false,
+    "built_at_utc": "2026-10-16T22:49:53.516042+00:00",
+    "executable_sha256": "6258f2c10df62754665c3fdfd39fca2e799c27949ec81a66e886957ae00b6d8e",
+    "cargo_lock_sha256": "34d402a724d3f96a63f154ae6a68e0f1668119011e22faad1f1b23e77e458b90",
+    "toolchain": "nightly-2026-08-21",
+    "platform": "Linux x86_64",
+    "profile": "dev (unoptimized)",
+    "rustc": "1.100.0-nightly (8925ea358 2026-08-20)",
+    "cargo": "1.100.0-nightly (514c56dd7 2026-08-19)",
+    "environment": {
+      "CARGO_BUILD_JOBS": "1",
+      "CARGO_PROFILE_DEV_DEBUG": "0",
+      "CARGO_PROFILE_DEV_INCREMENTAL": "false",
+      "CARGO_PROFILE_DEV_CODEGEN_UNITS": "256",
+      "RUST_MIN_STACK": "33554432",
+      "CARGO_NET_GIT_FETCH_WITH_CLI": "true"
+    },
+    "steps": [
+      {
+        "name": "pumpkin-final-clean",
+        "command": [
+          "clean",
+          "-p",
+          "pumpkin",
+          "-p",
+          "pumpkin-command"
+        ],
+        "exit_code": 0
+      },
+      {
+        "name": "pumpkin-final-build",
+        "command": [
+          "build",
+          "--locked",
+          "-p",
+          "pumpkin",
+          "--bin",
+          "pumpkin"
+        ],
+        "exit_code": 0
+      },
+      {
+        "name": "pumpkin-final-server-tests",
+        "command": [
+          "test",
+          "--locked",
+          "--lib",
+          "-p",
+          "pumpkin"
+        ],
+        "exit_code": 0
+      },
+      {
+        "name": "pumpkin-final-command-tests",
+        "command": [
+          "test",
+          "--locked",
+          "-p",
+          "pumpkin-command"
+        ],
+        "exit_code": 0
+      },
+      {
+        "name": "pumpkin-final-world-tests",
+        "command": [
+          "test",
+          "--locked",
+          "--lib",
+          "-p",
+          "pumpkin-world"
+        ],
+        "exit_code": 0
+      }
+    ],
+    "note": "Built on the larger Linux worker after the connected VM proved memory constrained. Pinned dependencies and Cargo.lock were not changed. The development executable is not a performance benchmark."
+  },
+  "validation": {
+    "rust_unit_tests_passed": 678,
+    "rust_doctests_passed": 5,
+    "python_unit_tests_passed": 20,
+    "runtime_checks_passed": 49,
+    "rust_tests": [
+      {
+        "package": "pumpkin",
+        "command": [
+          "cargo",
+          "+nightly-2026-08-21",
+          "test",
+          "--locked",
+          "--lib",
+          "-p",
+          "pumpkin"
+        ],
+        "unit_tests_passed": 354,
+        "unit_tests_failed": 0,
+        "doctests_passed": 0,
+        "exit_code": 0
+      },
+      {
+        "package": "pumpkin-command",
+        "command": [
+          "cargo",
+          "+nightly-2026-08-21",
+          "test",
+          "--locked",
+          "-p",
+          "pumpkin-command"
+        ],
+        "unit_tests_passed": 93,
+        "unit_tests_failed": 0,
+        "doctests_passed": 5,
+        "exit_code": 0
+      },
+      {
+        "package": "pumpkin-world",
+        "command": [
+          "cargo",
+          "+nightly-2026-08-21",
+          "test",
+          "--locked",
+          "--lib",
+          "-p",
+          "pumpkin-world"
+        ],
+        "unit_tests_passed": 231,
+        "unit_tests_failed": 0,
+        "doctests_passed": 0,
+        "exit_code": 0
+      }
+    ],
+    "static_checks": [
+      {
+        "command": [
+          "cargo",
+          "+nightly-2026-08-21",
+          "fmt",
+          "--all",
+          "--",
+          "--check"
+        ],
+        "exit_code": 0
+      },
+      {
+        "command": [
+          "cargo",
+          "+nightly-2026-08-21",
+          "clippy",
+          "--locked",
+          "--all-targets",
+          "-p",
+          "pumpkin",
+          "-p",
+          "pumpkin-command",
+          "-p",
+          "pumpkin-world",
+          "--",
+          "--no-deps"
+        ],
+        "exit_code": 0
+      },
+      {
+        "command": [
+          "python3",
+          "-m",
+          "unittest",
+          "tools.ironore.test_qualify"
+        ],
+        "passed": 20,
+        "exit_code": 0
+      },
+      {
+        "command": [
+          "uv",
+          "tool",
+          "run",
+          "mypy",
+          "--strict",
+          "--explicit-package-bases",
+          "tools/ironore/qualify.py",
+          "tools/ironore/test_qualify.py",
+          "tools/ironore/qualify_teleports.py",
+          "tools/ironore/qualify_blocks.py"
+        ],
+        "files_checked": 4,
+        "exit_code": 0
+      },
+      {
+        "command": [
+          "uv",
+          "tool",
+          "run",
+          "ruff",
+          "check",
+          "tools/ironore"
+        ],
+        "exit_code": 0
+      }
+    ],
+    "existing_toolchain_notice": "Cargo reports a future-incompatibility notice for dependency proc-macro-error2 v2.0.1. The affected crates pass Clippy with no remaining lint diagnostics.",
+    "runtime_suites": [
+      {
+        "suite": "qualify",
+        "command": [
+          "python3",
+          "-m",
+          "tools.ironore.qualify",
+          "--backend",
+          "pumpkin",
+          "--executable",
+          "<qa-root>/pumpkin-final",
+          "--run-dir",
+          "<qa-root>/qa-final",
+          "--timeout",
+          "240"
+        ],
+        "passed": 22,
+        "failed": 0,
+        "exit_code": 0,
+        "report": {
+          "schema": 1,
+          "backend": "pumpkin",
+          "minecraft_version": "26.3",
+          "protocol_version": 777,
+          "run_dir": "<qa-root>/qa-final",
+          "started_at": "2026-10-16T22:51:19.594878+00:00",
+          "finished_at": "2026-10-16T22:51:41.239313+00:00",
+          "overall": "pass",
+          "checks": [
+            {
+              "name": "server_start",
+              "status": "pass",
+              "detail": "server emitted its readiness marker",
+              "evidence": {
+                "port": 38517
+              }
+            },
+            {
+              "name": "protocol_login",
+              "status": "pass",
+              "detail": "protocol 777 login completed and the fixture chunk became writable",
+              "evidence": {
+                "initial_position": [
+                  0.5,
+                  79.0,
+                  0.5
+                ]
+              }
+            },
+            {
+              "name": "teleport_queue_ack_order",
+              "status": "pass",
+              "detail": "received both queued teleports before acknowledging old then new",
+              "evidence": {
+                "teleport_ids": [
+                  2,
+                  3
+                ],
+                "positions": [
+                  [
+                    12.5,
+                    100.0,
+                    12.5
+                  ],
+                  [
+                    20.5,
+                    100.0,
+                    20.5
+                  ]
+                ]
+              }
+            },
+            {
+              "name": "teleport_latest_server_position",
+              "status": "pass",
+              "detail": "server retained the newest queued teleport position",
+              "evidence": {
+                "position": [
+                  20.5,
+                  100.0,
+                  20.5
+                ]
+              }
+            },
+            {
+              "name": "datapack_namespaced_function",
+              "status": "pass",
+              "detail": "stopped-world Anvil state proves the function body ran",
+              "evidence": {
+                "position": [
+                  26,
+                  100,
+                  26
+                ],
+                "stored_name": "minecraft:diamond_block",
+                "stored_properties": {},
+                "expected_name": "minecraft:diamond_block",
+                "region": "<qa-root>/qa-final/world/dimensions/minecraft/overworld/region/r.0.0.mca",
+                "command_output": "Block placed\nExecuted 1 command(s) from function 'ironore:namespaced'"
+              }
+            },
+            {
+              "name": "datapack_default_function",
+              "status": "pass",
+              "detail": "stopped-world Anvil state proves the function body ran",
+              "evidence": {
+                "position": [
+                  27,
+                  100,
+                  26
+                ],
+                "stored_name": "minecraft:emerald_block",
+                "stored_properties": {},
+                "expected_name": "minecraft:emerald_block",
+                "region": "<qa-root>/qa-final/world/dimensions/minecraft/overworld/region/r.0.0.mca",
+                "command_output": "Block placed\nExecuted 1 command(s) from function 'minecraft:default'"
+              }
+            },
+            {
+              "name": "setblock_properties",
+              "status": "pass",
+              "detail": "stopped-world Anvil palette stores the requested stair properties",
+              "evidence": {
+                "predicate_marker_seen": true,
+                "stored_states": [
+                  {
+                    "position": [
+                      21,
+                      100,
+                      21
+                    ],
+                    "name": "minecraft:oak_stairs",
+                    "properties": {
+                      "facing": "east",
+                      "half": "top",
+                      "waterlogged": "false",
+                      "shape": "straight"
+                    },
+                    "region": "<qa-root>/qa-final/world/dimensions/minecraft/overworld/region/r.0.0.mca"
+                  }
+                ]
+              }
+            },
+            {
+              "name": "fill_properties",
+              "status": "pass",
+              "detail": "stopped-world Anvil palette stores the requested stair properties",
+              "evidence": {
+                "predicate_marker_seen": true,
+                "stored_states": [
+                  {
+                    "position": [
+                      22,
+                      100,
+                      21
+                    ],
+                    "name": "minecraft:oak_stairs",
+                    "properties": {
+                      "facing": "west",
+                      "half": "bottom",
+                      "shape": "straight",
+                      "waterlogged": "false"
+                    },
+                    "region": "<qa-root>/qa-final/world/dimensions/minecraft/overworld/region/r.0.0.mca"
+                  },
+                  {
+                    "position": [
+                      23,
+                      100,
+                      21
+                    ],
+                    "name": "minecraft:oak_stairs",
+                    "properties": {
+                      "facing": "west",
+                      "half": "bottom",
+                      "shape": "straight",
+                      "waterlogged": "false"
+                    },
+                    "region": "<qa-root>/qa-final/world/dimensions/minecraft/overworld/region/r.0.0.mca"
+                  },
+                  {
+                    "position": [
+                      22,
+                      100,
+                      22
+                    ],
+                    "name": "minecraft:oak_stairs",
+                    "properties": {
+                      "facing": "west",
+                      "half": "bottom",
+                      "shape": "straight",
+                      "waterlogged": "false"
+                    },
+                    "region": "<qa-root>/qa-final/world/dimensions/minecraft/overworld/region/r.0.0.mca"
+                  },
+                  {
+                    "position": [
+                      23,
+                      100,
+                      22
+                    ],
+                    "name": "minecraft:oak_stairs",
+                    "properties": {
+                      "facing": "west",
+                      "half": "bottom",
+                      "shape": "straight",
+                      "waterlogged": "false"
+                    },
+                    "region": "<qa-root>/qa-final/world/dimensions/minecraft/overworld/region/r.0.0.mca"
+                  }
+                ]
+              }
+            },
+            {
+              "name": "bat_flags_and_position",
+              "status": "pass",
+              "detail": "tagged bat retained NoAI/NoGravity and remained stationary across ticks",
+              "evidence": {
+                "before": [
+                  25.5,
+                  100.0,
+                  25.5
+                ],
+                "after": [
+                  25.5,
+                  100.0,
+                  25.5
+                ]
+              }
+            },
+            {
+              "name": "clock_configured",
+              "status": "pass",
+              "detail": "disabled clock advancement and queried overworld daytime 6000",
+              "evidence": {}
+            },
+            {
+              "name": "block_configured",
+              "status": "pass",
+              "detail": "'execute if block 20 99 20 minecraft:gold_block run help clone' emitted its fixture marker",
+              "evidence": {}
+            },
+            {
+              "name": "chest_removed_before_save",
+              "status": "pass",
+              "detail": "'execute if block 24 100 24 minecraft:air run help data' emitted its fixture marker",
+              "evidence": {}
+            },
+            {
+              "name": "clean_first_stop",
+              "status": "pass",
+              "detail": "server exited cleanly after stop",
+              "evidence": {
+                "returncode": 0
+              }
+            },
+            {
+              "name": "clock_nbt_persisted",
+              "status": "pass",
+              "detail": "world_clocks.dat overworld total_ticks is 6000",
+              "evidence": {
+                "total_ticks": 6000
+              }
+            },
+            {
+              "name": "chest_nbt_removed",
+              "status": "pass",
+              "detail": "removed chest has no saved block entity",
+              "evidence": {
+                "region": "<qa-root>/qa-final/world/dimensions/minecraft/overworld/region/r.0.0.mca"
+              }
+            },
+            {
+              "name": "restart_server",
+              "status": "pass",
+              "detail": "server became ready after restart",
+              "evidence": {}
+            },
+            {
+              "name": "restart_protocol_login",
+              "status": "pass",
+              "detail": "protocol client rejoined after restart",
+              "evidence": {
+                "initial_position": [
+                  20.5,
+                  100.0,
+                  20.5
+                ]
+              }
+            },
+            {
+              "name": "clock_restart_query",
+              "status": "pass",
+              "detail": "restarted server reported overworld clock 6000",
+              "evidence": {}
+            },
+            {
+              "name": "block_restart_query",
+              "status": "pass",
+              "detail": "'execute if block 20 99 20 minecraft:gold_block run help fill' emitted its fixture marker",
+              "evidence": {}
+            },
+            {
+              "name": "player_position_persisted",
+              "status": "pass",
+              "detail": "player position survived stop and restart",
+              "evidence": {
+                "position": [
+                  20.5,
+                  100.0,
+                  20.5
+                ]
+              }
+            },
+            {
+              "name": "bat_persistence",
+              "status": "pass",
+              "detail": "tagged bat and both flags survived restart",
+              "evidence": {
+                "position": [
+                  25.5,
+                  100.0,
+                  25.5
+                ]
+              }
+            },
+            {
+              "name": "clean_final_stop",
+              "status": "pass",
+              "detail": "server exited cleanly after final stop",
+              "evidence": {
+                "returncode": 0
+              }
+            }
+          ],
+          "artifacts": {
+            "server_log": "<qa-root>/qa-final/harness-server.log",
+            "report": "<qa-root>/qa-final/qualification.json"
+          }
+        }
+      },
+      {
+        "suite": "qualify_teleports",
+        "command": [
+          "python3",
+          "-m",
+          "tools.ironore.qualify_teleports",
+          "--executable",
+          "<qa-root>/pumpkin-final",
+          "--run-dir",
+          "<qa-root>/qa-teleport-final",
+          "--timeout",
+          "240"
+        ],
+        "passed": 12,
+        "failed": 0,
+        "exit_code": 0,
+        "report": {
+          "protocol": 777,
+          "executable": "<qa-root>/pumpkin-final",
+          "executable_sha256": "6258f2c10df62754665c3fdfd39fca2e799c27949ec81a66e886957ae00b6d8e",
+          "checks": [
+            {
+              "name": "accepted_pose_applied",
+              "passed": true,
+              "detail": "observed expected protocol behavior"
+            },
+            {
+              "name": "stale_ack_after_completion_ignored",
+              "passed": true,
+              "detail": "observed expected protocol behavior"
+            },
+            {
+              "name": "invalid_stale_pose_ignored",
+              "passed": true,
+              "detail": "observed expected protocol behavior"
+            },
+            {
+              "name": "nan_x_rejected",
+              "passed": true,
+              "detail": "observed expected protocol behavior"
+            },
+            {
+              "name": "nan_y_rejected",
+              "passed": true,
+              "detail": "observed expected protocol behavior"
+            },
+            {
+              "name": "nan_z_rejected",
+              "passed": true,
+              "detail": "observed expected protocol behavior"
+            },
+            {
+              "name": "nan_yaw_rejected",
+              "passed": true,
+              "detail": "observed expected protocol behavior"
+            },
+            {
+              "name": "infinite_yaw_rejected",
+              "passed": true,
+              "detail": "observed expected protocol behavior"
+            },
+            {
+              "name": "nan_pitch_rejected",
+              "passed": true,
+              "detail": "observed expected protocol behavior"
+            },
+            {
+              "name": "infinite_pitch_rejected",
+              "passed": true,
+              "detail": "observed expected protocol behavior"
+            },
+            {
+              "name": "duplicate_latest_ack_rejected",
+              "passed": true,
+              "detail": "observed expected protocol behavior"
+            },
+            {
+              "name": "clean_stop",
+              "passed": true,
+              "detail": "exit=0"
+            }
+          ]
+        }
+      },
+      {
+        "suite": "qualify_blocks",
+        "command": [
+          "python3",
+          "-m",
+          "tools.ironore.qualify_blocks",
+          "--executable",
+          "<qa-root>/pumpkin-final",
+          "--run-dir",
+          "<qa-root>/qa-blocks-final",
+          "--timeout",
+          "240"
+        ],
+        "passed": 15,
+        "failed": 0,
+        "exit_code": 0,
+        "report": {
+          "protocol": 777,
+          "executable_sha256": "6258f2c10df62754665c3fdfd39fca2e799c27949ec81a66e886957ae00b6d8e",
+          "checks": [
+            {
+              "name": "setblock_nbt_and_metadata",
+              "passed": true,
+              "detail": "observed expected behavior"
+            },
+            {
+              "name": "nbt_only_update",
+              "passed": true,
+              "detail": "observed expected behavior"
+            },
+            {
+              "name": "strict_container_nbt",
+              "passed": true,
+              "detail": "observed expected behavior"
+            },
+            {
+              "name": "explicit_property_predicates",
+              "passed": true,
+              "detail": "observed expected behavior"
+            },
+            {
+              "name": "tag_property_predicates",
+              "passed": true,
+              "detail": "observed expected behavior"
+            },
+            {
+              "name": "partial_nbt_predicates",
+              "passed": true,
+              "detail": "observed expected behavior"
+            },
+            {
+              "name": "fill_property_filter",
+              "passed": true,
+              "detail": "observed expected behavior"
+            },
+            {
+              "name": "fill_container_nbt",
+              "passed": true,
+              "detail": "observed expected behavior"
+            },
+            {
+              "name": "fill_nbt_filter",
+              "passed": true,
+              "detail": "observed expected behavior"
+            },
+            {
+              "name": "clone_nbt_filter",
+              "passed": true,
+              "detail": "observed expected behavior"
+            },
+            {
+              "name": "strict_suppresses_neighbor_updates",
+              "passed": true,
+              "detail": "observed expected behavior"
+            },
+            {
+              "name": "fill_destroy_completes",
+              "passed": true,
+              "detail": "observed expected behavior"
+            },
+            {
+              "name": "clean_first_stop",
+              "passed": true,
+              "detail": "exit=0"
+            },
+            {
+              "name": "block_entity_restart_persistence",
+              "passed": true,
+              "detail": "observed expected behavior"
+            },
+            {
+              "name": "clean_final_stop",
+              "passed": true,
+              "detail": "exit=0"
+            }
+          ]
+        }
+      }
+    ]
+  },
+  "baseline": {
+    "source_commit": "f7e637be76ff256ac5eeb157d4848bfa381af602",
+    "executable_sha256": "63bcaa218e5a398690d3cdc10facca84f004b234a262a665c4b0c09eeeb50d12",
+    "harness_note": "The baseline executable was tested with regression harnesses developed on this branch. The original suite uses the corrected Pumpkin success-message detector.",
+    "original_suite": {
+      "schema": 1,
+      "backend": "pumpkin",
+      "minecraft_version": "26.3",
+      "protocol_version": 777,
+      "run_dir": "<qa-root>/qa-baseline-2",
+      "started_at": "2026-10-16T22:02:22.217178+00:00",
+      "finished_at": "2026-10-16T22:02:40.480247+00:00",
+      "overall": "pass",
+      "checks": [
+        {
+          "name": "server_start",
+          "status": "pass",
+          "detail": "server emitted its readiness marker",
+          "evidence": {
+            "port": 56219
+          }
+        },
+        {
+          "name": "protocol_login",
+          "status": "pass",
+          "detail": "protocol 777 login completed and the fixture chunk became writable",
+          "evidence": {
+            "initial_position": [
+              0.5,
+              79.0,
+              0.5
+            ]
+          }
+        },
+        {
+          "name": "teleport_queue_ack_order",
+          "status": "pass",
+          "detail": "received both queued teleports before acknowledging old then new",
+          "evidence": {
+            "teleport_ids": [
+              2,
+              3
+            ],
+            "positions": [
+              [
+                12.5,
+                100.0,
+                12.5
+              ],
+              [
+                20.5,
+                100.0,
+                20.5
+              ]
+            ]
+          }
+        },
+        {
+          "name": "teleport_latest_server_position",
+          "status": "pass",
+          "detail": "server retained the newest queued teleport position",
+          "evidence": {
+            "position": [
+              20.5,
+              100.0,
+              20.5
+            ]
+          }
+        },
+        {
+          "name": "datapack_namespaced_function",
+          "status": "pass",
+          "detail": "stopped-world Anvil state proves the function body ran",
+          "evidence": {
+            "position": [
+              26,
+              100,
+              26
+            ],
+            "stored_name": "minecraft:diamond_block",
+            "stored_properties": {},
+            "expected_name": "minecraft:diamond_block",
+            "region": "<qa-root>/qa-baseline-2/world/dimensions/minecraft/overworld/region/r.0.0.mca",
+            "command_output": "Block placed\nExecuted 1 command(s) from function 'ironore:namespaced'"
+          }
+        },
+        {
+          "name": "datapack_default_function",
+          "status": "pass",
+          "detail": "stopped-world Anvil state proves the function body ran",
+          "evidence": {
+            "position": [
+              27,
+              100,
+              26
+            ],
+            "stored_name": "minecraft:emerald_block",
+            "stored_properties": {},
+            "expected_name": "minecraft:emerald_block",
+            "region": "<qa-root>/qa-baseline-2/world/dimensions/minecraft/overworld/region/r.0.0.mca",
+            "command_output": "Block placed\nExecuted 1 command(s) from function 'minecraft:default'"
+          }
+        },
+        {
+          "name": "setblock_properties",
+          "status": "pass",
+          "detail": "stopped-world Anvil palette stores the requested stair properties",
+          "evidence": {
+            "predicate_marker_seen": true,
+            "stored_states": [
+              {
+                "position": [
+                  21,
+                  100,
+                  21
+                ],
+                "name": "minecraft:oak_stairs",
+                "properties": {
+                  "half": "top",
+                  "waterlogged": "false",
+                  "facing": "east",
+                  "shape": "straight"
+                },
+                "region": "<qa-root>/qa-baseline-2/world/dimensions/minecraft/overworld/region/r.0.0.mca"
+              }
+            ]
+          }
+        },
+        {
+          "name": "fill_properties",
+          "status": "pass",
+          "detail": "stopped-world Anvil palette stores the requested stair properties",
+          "evidence": {
+            "predicate_marker_seen": true,
+            "stored_states": [
+              {
+                "position": [
+                  22,
+                  100,
+                  21
+                ],
+                "name": "minecraft:oak_stairs",
+                "properties": {
+                  "half": "bottom",
+                  "waterlogged": "false",
+                  "facing": "west",
+                  "shape": "straight"
+                },
+                "region": "<qa-root>/qa-baseline-2/world/dimensions/minecraft/overworld/region/r.0.0.mca"
+              },
+              {
+                "position": [
+                  23,
+                  100,
+                  21
+                ],
+                "name": "minecraft:oak_stairs",
+                "properties": {
+                  "half": "bottom",
+                  "waterlogged": "false",
+                  "facing": "west",
+                  "shape": "straight"
+                },
+                "region": "<qa-root>/qa-baseline-2/world/dimensions/minecraft/overworld/region/r.0.0.mca"
+              },
+              {
+                "position": [
+                  22,
+                  100,
+                  22
+                ],
+                "name": "minecraft:oak_stairs",
+                "properties": {
+                  "half": "bottom",
+                  "waterlogged": "false",
+                  "facing": "west",
+                  "shape": "straight"
+                },
+                "region": "<qa-root>/qa-baseline-2/world/dimensions/minecraft/overworld/region/r.0.0.mca"
+              },
+              {
+                "position": [
+                  23,
+                  100,
+                  22
+                ],
+                "name": "minecraft:oak_stairs",
+                "properties": {
+                  "half": "bottom",
+                  "waterlogged": "false",
+                  "facing": "west",
+                  "shape": "straight"
+                },
+                "region": "<qa-root>/qa-baseline-2/world/dimensions/minecraft/overworld/region/r.0.0.mca"
+              }
+            ]
+          }
+        },
+        {
+          "name": "bat_flags_and_position",
+          "status": "pass",
+          "detail": "tagged bat retained NoAI/NoGravity and remained stationary across ticks",
+          "evidence": {
+            "before": [
+              25.5,
+              100.0,
+              25.5
+            ],
+            "after": [
+              25.5,
+              100.0,
+              25.5
+            ]
+          }
+        },
+        {
+          "name": "clock_configured",
+          "status": "pass",
+          "detail": "disabled clock advancement and queried overworld daytime 6000",
+          "evidence": {}
+        },
+        {
+          "name": "block_configured",
+          "status": "pass",
+          "detail": "'execute if block 20 99 20 minecraft:gold_block run help clone' emitted its fixture marker",
+          "evidence": {}
+        },
+        {
+          "name": "chest_removed_before_save",
+          "status": "pass",
+          "detail": "'execute if block 24 100 24 minecraft:air run help data' emitted its fixture marker",
+          "evidence": {}
+        },
+        {
+          "name": "clean_first_stop",
+          "status": "pass",
+          "detail": "server exited cleanly after stop",
+          "evidence": {
+            "returncode": 0
+          }
+        },
+        {
+          "name": "clock_nbt_persisted",
+          "status": "pass",
+          "detail": "world_clocks.dat overworld total_ticks is 6000",
+          "evidence": {
+            "total_ticks": 6000
+          }
+        },
+        {
+          "name": "chest_nbt_removed",
+          "status": "pass",
+          "detail": "removed chest has no saved block entity",
+          "evidence": {
+            "region": "<qa-root>/qa-baseline-2/world/dimensions/minecraft/overworld/region/r.0.0.mca"
+          }
+        },
+        {
+          "name": "restart_server",
+          "status": "pass",
+          "detail": "server became ready after restart",
+          "evidence": {}
+        },
+        {
+          "name": "restart_protocol_login",
+          "status": "pass",
+          "detail": "protocol client rejoined after restart",
+          "evidence": {
+            "initial_position": [
+              20.5,
+              100.0,
+              20.5
+            ]
+          }
+        },
+        {
+          "name": "clock_restart_query",
+          "status": "pass",
+          "detail": "restarted server reported overworld clock 6000",
+          "evidence": {}
+        },
+        {
+          "name": "block_restart_query",
+          "status": "pass",
+          "detail": "'execute if block 20 99 20 minecraft:gold_block run help fill' emitted its fixture marker",
+          "evidence": {}
+        },
+        {
+          "name": "player_position_persisted",
+          "status": "pass",
+          "detail": "player position survived stop and restart",
+          "evidence": {
+            "position": [
+              20.5,
+              100.0,
+              20.5
+            ]
+          }
+        },
+        {
+          "name": "bat_persistence",
+          "status": "pass",
+          "detail": "tagged bat and both flags survived restart",
+          "evidence": {
+            "position": [
+              25.5,
+              100.0,
+              25.5
+            ]
+          }
+        },
+        {
+          "name": "clean_final_stop",
+          "status": "pass",
+          "detail": "server exited cleanly after final stop",
+          "evidence": {
+            "returncode": 0
+          }
+        }
+      ],
+      "artifacts": {
+        "server_log": "<qa-root>/qa-baseline-2/harness-server.log",
+        "report": "<qa-root>/qa-baseline-2/qualification.json"
+      }
+    },
+    "teleport_suite": {
+      "protocol": 777,
+      "executable": "<qa-root>/pumpkin-baseline",
+      "executable_sha256": "63bcaa218e5a398690d3cdc10facca84f004b234a262a665c4b0c09eeeb50d12",
+      "checks": [
+        {
+          "name": "accepted_pose_applied",
+          "passed": false,
+          "detail": "acknowledged position was discarded: (20.5, 100.0, 20.5)"
+        },
+        {
+          "name": "stale_ack_after_completion_ignored",
+          "passed": false,
+          "detail": "server closed the protocol connection"
+        },
+        {
+          "name": "invalid_stale_pose_ignored",
+          "passed": true,
+          "detail": "observed expected protocol behavior"
+        },
+        {
+          "name": "nan_x_rejected",
+          "passed": false,
+          "detail": "server accepted an invalid teleport pose"
+        },
+        {
+          "name": "nan_y_rejected",
+          "passed": false,
+          "detail": "server accepted an invalid teleport pose"
+        },
+        {
+          "name": "nan_z_rejected",
+          "passed": false,
+          "detail": "server accepted an invalid teleport pose"
+        },
+        {
+          "name": "nan_yaw_rejected",
+          "passed": false,
+          "detail": "server accepted an invalid teleport pose"
+        },
+        {
+          "name": "infinite_yaw_rejected",
+          "passed": false,
+          "detail": "server accepted an invalid teleport pose"
+        },
+        {
+          "name": "nan_pitch_rejected",
+          "passed": false,
+          "detail": "server accepted an invalid teleport pose"
+        },
+        {
+          "name": "infinite_pitch_rejected",
+          "passed": false,
+          "detail": "server accepted an invalid teleport pose"
+        },
+        {
+          "name": "duplicate_latest_ack_rejected",
+          "passed": false,
+          "detail": "wrong disconnect reason: 08002e53656e642054656c65706f727420636f6e6669726d2c2062757420776520646964206e6f742074656c65706f7274"
+        },
+        {
+          "name": "clean_stop",
+          "passed": true,
+          "detail": "exit=0"
+        }
+      ]
+    },
+    "block_suite": {
+      "protocol": 777,
+      "executable_sha256": "63bcaa218e5a398690d3cdc10facca84f004b234a262a665c4b0c09eeeb50d12",
+      "checks": [
+        {
+          "name": "setblock_nbt_and_metadata",
+          "passed": false,
+          "detail": "setblock 17 100 17 chest[facing=east]{id:\"minecraft:furnace\",x:0,y:0,z:0,Items:[{Slot:0b,id:\"minecraft:diamond\",count:3}]}: Expected whitespace to end one argument, but found trailing data\n...cing=east]{id:\"minecraft:furnace\",x:0,y:0,z:0,Items:[{Slot:0b,id:\"minecraft:diamond\",count:3}]}<--[HERE]"
+        },
+        {
+          "name": "nbt_only_update",
+          "passed": false,
+          "detail": "setblock 17 100 17 chest[facing=east]{Items:[{Slot:0b,id:\"minecraft:diamond\",count:5}]}: Expected whitespace to end one argument, but found trailing data\n...cing=east]{Items:[{Slot:0b,id:\"minecraft:diamond\",count:5}]}<--[HERE]"
+        },
+        {
+          "name": "strict_container_nbt",
+          "passed": false,
+          "detail": "setblock 19 100 17 chest{Items:[{Slot:0b,id:\"minecraft:emerald\",count:2}]} strict: Expected whitespace to end one argument, but found trailing data\n...0 17 chest{Items:[{Slot:0b,id:\"minecraft:emerald\",count:2}]} strict<--[HERE]"
+        },
+        {
+          "name": "explicit_property_predicates",
+          "passed": false,
+          "detail": "execute if block 21 100 17 oak_stairs[facing=east] run help setblock: Expected whitespace to end one argument, but found trailing data\n...oak_stairs[facing=east] run help setblock<--[HERE]"
+        },
+        {
+          "name": "tag_property_predicates",
+          "passed": false,
+          "detail": "execute if block 23 100 17 #minecraft:logs[axis=x] run help setblock: Unknown block type 'minecraft:'\n...23 100 17 #minecraft:logs[axis=x] run help setblock<--[HERE]"
+        },
+        {
+          "name": "partial_nbt_predicates",
+          "passed": false,
+          "detail": "execute if block 17 100 17 chest{Items:[{id:\"minecraft:diamond\"}]} run help setblock: Expected whitespace to end one argument, but found trailing data\n...0 17 chest{Items:[{id:\"minecraft:diamond\"}]} run help setblock<--[HERE]"
+        },
+        {
+          "name": "fill_property_filter",
+          "passed": false,
+          "detail": "execute if block 18 100 19 oak_log[axis=y] run help setblock: Expected whitespace to end one argument, but found trailing data\n...19 oak_log[axis=y] run help setblock<--[HERE]"
+        },
+        {
+          "name": "fill_container_nbt",
+          "passed": false,
+          "detail": "data get block 20 100 19: The target block is not a block entity"
+        },
+        {
+          "name": "fill_nbt_filter",
+          "passed": false,
+          "detail": "setblock 23 100 19 chest{Items:[{Slot:0b,id:\"minecraft:diamond\",count:1}]}: Expected whitespace to end one argument, but found trailing data\n...0 19 chest{Items:[{Slot:0b,id:\"minecraft:diamond\",count:1}]}<--[HERE]"
+        },
+        {
+          "name": "clone_nbt_filter",
+          "passed": false,
+          "detail": "setblock 17 100 21 chest{Items:[{Slot:0b,id:\"minecraft:diamond\",count:6}]}: Expected whitespace to end one argument, but found trailing data\n...0 21 chest{Items:[{Slot:0b,id:\"minecraft:diamond\",count:6}]}<--[HERE]"
+        },
+        {
+          "name": "fill_destroy_completes",
+          "passed": false,
+          "detail": "timed out during command completion: fill 26 100 19 26 100 19 gold_block destroy; output tail:\n...0 17 chest{Items:[{id:\"minecraft:diamond\"}]} run help setblock<--[HERE]\nThere are 1 of a max of 1 players online: BlockBot\nBlock placed\nThere are 1 of a max of 1 players online: BlockBot\nBlock placed\nThere are 1 of a max of 1 players online: BlockBot\n2 blocks filled\nThere are 1 of a max of 1 players online: BlockBot\n-----------------  Help - /setblock  -----------------\nCommand: /setblock\nDescription: Place a block.\nUsage: /setblock <pos>\n----------------------------------------------------\nThere are 1 of a max of 1 players online: BlockBot\nExpected whitespace to end one argument, but found trailing data\n...19 oak_log[axis=y] run help setblock<--[HERE]\nThere are 1 of a max of 1 players online: BlockBot\nExpected whitespace to end one argument, but found trailing data\n...0 19 chest{Items:[{Slot:0b,id:\"minecraft:diamond\",count:4}]}<--[HERE]\nThere are 1 of a max of 1 players online: BlockBot\nThe target block is not a block entity\nThere are 1 of a max of 1 players online: BlockBot\nExpected whitespace to end one argument, but found trailing data\n...0 19 chest{Items:[{Slot:0b,id:\"minecraft:diamond\",count:1}]}<--[HERE]\nThere are 1 of a max of 1 players online: BlockBot\nExpected whitespace to end one argument, but found trailing data\n...0 21 chest{Items:[{Slot:0b,id:\"minecraft:diamond\",count:6}]}<--[HERE]\nThere are 1 of a max of 1 players online: BlockBot\nBlock placed\nThere are 1 of a max of 1 players online: BlockBot"
+        },
+        {
+          "name": "server_lifecycle",
+          "passed": false,
+          "detail": "unclean stop: -9"
+        }
+      ]
+    },
+    "block_suite_note": "Eleven behavior observations failed and the owned server required termination after /fill destroy hung. Restart checks did not run. The strict neighbor-update observation was added after this baseline run. These failures include dependent fixture failures, not eleven independent root causes.",
+    "block_parser_regressions": {
+      "passed_before_fix": 85,
+      "failed_before_fix": 5,
+      "note": "New parser regressions were run against the prior implementation before applying the fixes."
+    }
+  },
+  "limits": [
+    "Coverage establishes the recorded command, protocol, persistence, unit, and lint checks, not completion of the full vanilla port.",
+    "Pumpkin clocks remain per World; vanilla 26.3 uses shared server clock IDs.",
+    "Block NBT support uses existing Pumpkin block-entity serializers. Missing entity behavior and fields are outside this change.",
+    "Native Java client, survival gameplay, cross-dimension gameplay, and Bedrock acceptance were not performed.",
+    "Vanilla world migration and full save compatibility remain unqualified; Pumpkin DataVersion 4903 differs from vanilla 5023.",
+    "The Rust test and Clippy commands cover the named packages and default features, not every workspace package or feature combination.",
+    "No performance claims or release build qualification are made."
+  ],
+  "github_actions_note": {
+    "initial_push_run": "https://github.com/cloudrumbles/Pumpkin/actions/runs/38972063967",
+    "workflow": "Spelling",
+    "head_sha": "f7e637be76ff256ac5eeb157d4848bfa381af602",
+    "job_started_at": "2026-10-16T21:50:48Z",
+    "job_completed_at": "2026-10-16T21:50:57Z",
+    "observed_job_duration_seconds": 9,
+    "note": "The initial branch push unintentionally triggered this inherited workflow before skip-ci commits were in place. Subsequent code pushes triggered no workflows. The qualification above was run on Linux outside GitHub Actions."
+  }
+}
