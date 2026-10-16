@@ -48,6 +48,10 @@ def named_compound(name: str, children: bytes) -> bytes:
 
 
 class CodecTests(unittest.TestCase):
+    def test_pumpkin_block_placement_feedback_is_recognized(self) -> None:
+        result = CommandResult("setblock 20 98 20 minecraft:stone", ("Block placed",))
+        self.assertTrue(block_placement_succeeded(result, 20, 98, 20))
+
     def test_signed_varints_round_trip(self) -> None:
         for value in (0, 1, 127, 128, 255, 2**31 - 1, -1, -(2**31)):
             encoded = encode_varint(value)

@@ -37,11 +37,12 @@ because a check is unsupported or unrun.
 Static validation:
 
 ```sh
-uvx mypy --strict --explicit-package-bases \
-  tools/ironore/qualify.py tools/ironore/test_qualify.py
+uv tool run mypy --strict --explicit-package-bases \
+  tools/ironore/qualify.py tools/ironore/test_qualify.py \
+  tools/ironore/qualify_teleports.py tools/ironore/qualify_blocks.py
+uv tool run ruff check tools/ironore
 python -m unittest tools.ironore.test_qualify
 ```
-
 
 ## Teleport acknowledgements
 
@@ -56,3 +57,23 @@ uv run --no-project python -m tools.ironore.qualify_teleports \
   --run-dir /absolute/path/to/new-teleport-run \
   --timeout 240
 ```
+
+## Block inputs and predicates
+
+The block suite checks container NBT for `/setblock` and `/fill`, NBT-only
+updates, block entity identity and position, strict placement, explicit and tag
+property filters, partial NBT matching, filtered cloning, `/fill destroy`, and
+container persistence after a clean restart. It writes every observation and
+the executable hash to `block-qualification.json`.
+
+```sh
+uv run --no-project python -m tools.ironore.qualify_blocks \
+  --executable /absolute/path/to/pumpkin \
+  --run-dir /absolute/path/to/new-block-run \
+  --timeout 240
+```
+
+Both additional suites require a new disposable directory and use a minimal
+protocol client. Their exit status is 0 only when every observation passes.
+They qualify the covered command and protocol behavior; native client and
+survival gameplay acceptance require separate checks.

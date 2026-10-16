@@ -1267,7 +1267,10 @@ def datapack_enable_command(
 
 def block_placement_succeeded(result: CommandResult, x: int, y: int, z: int) -> bool:
     marker = f"Changed the block at {x}, {y}, {z}"
-    return not result.looks_unsupported and marker in result.text
+    return not result.looks_unsupported and (
+        marker in result.text
+        or any(line.strip() == "Block placed" for line in result.lines)
+    )
 
 
 def close_position(

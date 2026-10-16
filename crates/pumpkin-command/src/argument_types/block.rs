@@ -1,5 +1,6 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
+use crate::argument_types::nbt::NbtCompoundArgumentType;
 use crate::{
     argument_types::argument_type::{ArgumentType, JavaClientArgumentType},
     context::command_context::CommandContext,
@@ -9,6 +10,7 @@ use crate::{
     suggestion::suggestions::{Suggestions, SuggestionsBuilder},
 };
 use pumpkin_data::{Block, BlockState, translation};
+use pumpkin_nbt::compound::NbtCompound;
 use pumpkin_util::text::TextComponent;
 
 pub const INVALID_BLOCK_ERROR_TYPE: CommandErrorType<1> = CommandErrorType::new(
@@ -64,10 +66,17 @@ impl<S: crate::source::CommandSource> ArgumentType<S> for BlockArgumentType {
     }
 }
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct BlockStateArgument {
     pub block: &'static Block,
     pub state: &'static BlockState,
+    pub properties: HashMap<String, String>,
+    pub nbt: Option<NbtCompound>,
+}
+
+struct ParsedProperties {
+    state: &'static BlockState,
+    explicit: HashMap<String, String>,
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
@@ -78,8 +87,18 @@ impl<S: crate::source::CommandSource> ArgumentType<S> for BlockStateArgumentType
 
     fn parse(&self, reader: &mut StringReader) -> Result<Self::Item, CommandSyntaxError> {
         let block = parse_block(reader)?;
-        let state = parse_state_properties(reader, block)?;
-        Ok(BlockStateArgument { block, state })
+        let properties = parse_state_properties(reader, block)?;
+        let nbt = if reader.peek() == Some('{') {
+            Some(ArgumentType::<S>::parse(&NbtCompoundArgumentType, reader)?)
+        } else {
+            None
+        };
+        Ok(BlockStateArgument {
+            block,
+            state: properties.state,
+            properties: properties.explicit,
+            nbt,
+        })
     }
 
     fn client_side_parser(&self) -> JavaClientArgumentType {
@@ -100,7 +119,7 @@ impl BlockStateArgumentType {
         context: &CommandContext<S>,
         name: &str,
     ) -> Result<BlockStateArgument, CommandSyntaxError> {
-        context.get_argument::<BlockStateArgument>(name).copied()
+        context.get_argument::<BlockStateArgument>(name).cloned()
     }
 }
 
@@ -127,9 +146,12 @@ fn parse_block(reader: &mut StringReader) -> Result<&'static Block, CommandSynta
 fn parse_state_properties(
     reader: &mut StringReader,
     block: &'static Block,
-) -> Result<&'static BlockState, CommandSyntaxError> {
+) -> Result<ParsedProperties, CommandSyntaxError> {
     if reader.peek() != Some('[') {
-        return Ok(block.default_state);
+        return Ok(ParsedProperties {
+            state: block.default_state,
+            explicit: HashMap::new(),
+        });
     }
     reader.skip();
     reader.skip_whitespace();
@@ -227,7 +249,11 @@ fn parse_state_properties(
         .map(|(name, value)| (name.as_str(), value.as_str()))
         .collect();
     if let Some(state) = block.state_from_properties(&property_refs) {
-        return Ok(state);
+        let explicit = properties
+            .into_iter()
+            .filter(|(name, _)| seen.contains(name))
+            .collect();
+        return Ok(ParsedProperties { state, explicit });
     }
 
     let (name, value) = last_property.unwrap_or_default();
@@ -296,5 +322,29 @@ mod tests {
             .expect_err("stairs cannot face up");
 
         assert_eq!(error.error_type, &INVALID_BLOCK_PROPERTY_ERROR_TYPE);
+    }
+
+    #[test]
+    fn consumes_block_entity_nbt_after_state_properties() {
+        let input = r#"chest[facing=east]{Items:[{Slot:0b,id:"minecraft:diamond",count:3}]}"#;
+        let mut reader = StringReader::new(input);
+        let parsed = ArgumentType::<DummySource>::parse(&BlockStateArgumentType, &mut reader)
+            .expect("valid block input");
+        assert_eq!(parsed.block.name, "chest");
+        assert_eq!(reader.cursor(), input.len());
+    }
+
+    #[test]
+    fn rejects_unterminated_block_entity_nbt() {
+        let mut reader = StringReader::new("chest{Items:[");
+        assert!(ArgumentType::<DummySource>::parse(&BlockStateArgumentType, &mut reader).is_err());
+    }
+
+    #[test]
+    fn leaves_the_command_mode_after_block_entity_nbt() {
+        let mut reader = StringReader::new("chest{Items:[]} keep");
+        ArgumentType::<DummySource>::parse(&BlockStateArgumentType, &mut reader)
+            .expect("valid block input");
+        assert_eq!(reader.string()[reader.cursor()..].trim_start(), "keep");
     }
 }

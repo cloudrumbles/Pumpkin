@@ -14,7 +14,7 @@
 )]
 
 use crate::command::argument_builder::{ArgumentBuilder, argument, command, literal};
-use crate::command::argument_types::block::BlockArgumentType;
+use crate::command::argument_types::block_predicate::BlockPredicateArgumentType;
 use crate::command::argument_types::coordinates::block_pos::BlockPosArgumentType;
 use crate::command::argument_types::coordinates::rotation::RotationArgumentType;
 use crate::command::argument_types::coordinates::swizzle::SwizzleArgumentType;
@@ -29,6 +29,7 @@ use crate::command::argument_types::range::{FloatRangeArgumentType, IntRangeArgu
 use crate::command::argument_types::resource::{ENTITY_TYPE_ARGUMENT, ResourceArgument};
 use crate::command::argument_types::resource_key::{BIOME_REGISTRY, ResourceKeyArgument};
 use crate::command::argument_types::resource_or_tag::{ResourceOrTag, ResourceOrTagArgument};
+use crate::command::block_input::matches_block;
 use crate::command::commands::data::{
     BlockDataAccessor, DataAccessor, EntityDataAccessor, StorageDataAccessor,
 };
@@ -266,11 +267,10 @@ fn execute_if_block_modifier(
     context: &CommandContext,
 ) -> crate::command::node::RedirectModifierResult {
     let pos = BlockPosArgumentType::get_block_pos(context, "pos")?;
-    let expected_block = BlockArgumentType::get(context, "block")?;
+    let expected_block = BlockPredicateArgumentType::get(context, "block")?;
 
     if let Some(ref world) = context.source.world {
-        let block = world.get_block(&pos);
-        if block == expected_block {
+        if matches_block(world, &pos, &expected_block) {
             return Ok(vec![context.source.clone()]);
         }
     }
@@ -281,11 +281,10 @@ fn execute_unless_block_modifier(
     context: &CommandContext,
 ) -> crate::command::node::RedirectModifierResult {
     let pos = BlockPosArgumentType::get_block_pos(context, "pos")?;
-    let expected_block = BlockArgumentType::get(context, "block")?;
+    let expected_block = BlockPredicateArgumentType::get(context, "block")?;
 
     if let Some(ref world) = context.source.world {
-        let block = world.get_block(&pos);
-        if block != expected_block {
+        if !matches_block(world, &pos, &expected_block) {
             return Ok(vec![context.source.clone()]);
         }
     } else {
@@ -1202,7 +1201,7 @@ pub fn register(dispatcher: &mut CommandDispatcher, registry: &PermissionRegistr
                 ))
                 .then(
                     literal("block").then(argument("pos", BlockPosArgumentType).then(
-                        argument("block", BlockArgumentType).redirect_with_modifier(
+                        argument("block", BlockPredicateArgumentType).redirect_with_modifier(
                             Redirection::Root,
                             RedirectModifier::Custom(Arc::new(execute_if_block_modifier)),
                         ),
@@ -1387,7 +1386,7 @@ pub fn register(dispatcher: &mut CommandDispatcher, registry: &PermissionRegistr
                 ))
                 .then(
                     literal("block").then(argument("pos", BlockPosArgumentType).then(
-                        argument("block", BlockArgumentType).redirect_with_modifier(
+                        argument("block", BlockPredicateArgumentType).redirect_with_modifier(
                             Redirection::Root,
                             RedirectModifier::Custom(Arc::new(execute_unless_block_modifier)),
                         ),

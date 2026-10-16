@@ -25,6 +25,18 @@ artifacts.
   `/setblock` and `/fill`.
 - Merge repeated command branches so entity and block `/data` queries remain
   reachable alongside storage queries.
+- Process Java 26.3 accepted teleport poses through the movement handler, ignore
+  superseded acknowledgements after completion, validate current poses, and wrap
+  teleport IDs at the same boundary as vanilla.
+- Parse block-entity NBT in `/setblock` and `/fill`. Apply it to the actual block
+  entity with its type and position preserved, count NBT-only changes, and retain
+  the data across restart.
+- Match explicitly supplied properties and partial NBT in block and tag
+  predicates for `/execute if/unless block`, `/fill replace`, and `/clone filtered`.
+- Route fills through normal block placement, avoiding the `/fill destroy`
+  read-lock deadlock, creating block entities, honoring strict mode, and reporting
+  actual changes. Destroy mode permits drops; normal replacement suppresses block
+  entity replacement side effects.
 
 Regression tests accompany these changes. A passing build or unit test does not
 establish survival parity or compatibility with vanilla saves.
@@ -78,7 +90,10 @@ client/server checks. Never open a user's only world copy during qualification.
 
 Pumpkin owns a clock per World. Vanilla 26.3 has a server clock manager and
 dimensions refer to shared clock IDs; this fork repairs persistence within
-Pumpkin's existing architecture. Block-state command parsing does not add
-block-entity NBT arguments or complete block-predicate matching. Teleport
-acknowledgement handling does not yet validate the 26.3 accepted pose. Other
-upstream gameplay gaps remain tracked upstream.
+Pumpkin's existing architecture. The block command additions use Pumpkin's
+existing block-entity serializers; unimplemented block-entity behavior and data
+fields remain outside their scope. The Java reference declares world DataVersion
+5023 while Pumpkin uses 4903, so vanilla world migration and full save compatibility
+remain unqualified. Native client, survival, cross-dimension, and Bedrock
+acceptance are not established by the minimal Java protocol harness. Other
+gameplay gaps remain tracked upstream.
