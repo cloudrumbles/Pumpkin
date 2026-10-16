@@ -7713,7 +7713,7 @@ pub(crate) mod tests {
         World, bedrock_block_breaking_rate, bedrock_chest_block_actor, merge_entity_records,
     };
 
-    pub(crate) struct TestWorld {
+    pub struct TestWorld {
         pub(crate) world: Arc<World>,
         pub(crate) level: Arc<Level>,
         _temp_dir: TempDir,
@@ -7896,7 +7896,7 @@ pub(crate) mod tests {
 
         merge_entity_records(&mut data, true, Vec::new());
 
-        assert!(data.is_empty());
+        assert_eq!(data, [] as [NbtCompound; 0]);
     }
 
     #[test]

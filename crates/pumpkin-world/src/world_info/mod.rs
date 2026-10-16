@@ -781,8 +781,8 @@ mod tests {
         for name in preset_names {
             let preset = FlatLevelGeneratorPreset::from_name(name)
                 .unwrap_or_else(|| panic!("failed to load flat preset {name}"));
-            assert!(!preset.settings.biome.is_empty());
-            assert!(!preset.settings.layers.is_empty());
+            assert_ne!(preset.settings.biome, "");
+            assert_ne!(preset.settings.layers, [] as [super::FlatPresetLayer; 0]);
             assert_eq!(
                 preset.settings.layers.len(),
                 preset.settings.to_flat_layers().len()

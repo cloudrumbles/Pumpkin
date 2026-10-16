@@ -246,7 +246,10 @@ mod tests {
     #[test]
     fn non_overworld_selection_preserves_local_indexing() {
         let selected = select_features(&[Biome::NETHER_WASTES.id], 9);
-        assert!(!selected.is_empty());
+        assert_ne!(
+            selected,
+            [] as [(usize, pumpkin_data::placed_feature::PlacedFeature); 0]
+        );
         assert!(
             selected
                 .iter()

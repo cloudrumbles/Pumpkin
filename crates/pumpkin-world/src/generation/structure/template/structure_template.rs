@@ -1336,7 +1336,7 @@ mod tests {
     fn palette_entry_creation() {
         let entry = PaletteEntry::new("minecraft:stone".to_string());
         assert_eq!(entry.name, "minecraft:stone");
-        assert!(entry.properties.is_empty());
+        assert_eq!(entry.properties, [] as [(String, String); 0]);
 
         let entry_with_props = PaletteEntry::with_properties(
             "minecraft:oak_stairs".to_string(),

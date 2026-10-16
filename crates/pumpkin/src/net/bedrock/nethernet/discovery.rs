@@ -368,7 +368,7 @@ fn push_string(buffer: &mut Vec<u8>, value: &str) -> Result<(), Error> {
 
 fn encrypt(data: &mut [u8]) {
     let (blocks, remainder) = Block::slice_as_chunks_mut(data);
-    debug_assert!(remainder.is_empty());
+    debug_assert_eq!(remainder, [] as [u8; 0]);
     Aes256::new((&*KEY).into()).encrypt_blocks(blocks);
 }
 

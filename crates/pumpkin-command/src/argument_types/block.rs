@@ -143,6 +143,8 @@ fn parse_block(reader: &mut StringReader) -> Result<&'static Block, CommandSynta
         .ok_or_else(|| INVALID_BLOCK_ERROR_TYPE.create(reader, TextComponent::text(normalized)))
 }
 
+// Keeping cursor changes and syntax errors together makes the parser auditable.
+#[expect(clippy::too_many_lines)]
 fn parse_state_properties(
     reader: &mut StringReader,
     block: &'static Block,

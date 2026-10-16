@@ -55,7 +55,6 @@ enum FilterMode {
     KeepAir,
 }
 
-#[expect(clippy::too_many_lines)]
 fn fill_blocks(
     source: &CommandSource,
     from: BlockPos,
