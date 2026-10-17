@@ -484,6 +484,10 @@ impl Goal for EvokerSummonSpellGoal {
                 );
 
                 let vex = from_type(&EntityType::VEX, spawn_pos, &world, Uuid::new_v4());
+                if let Some(vex_mob) = vex.cast_any().downcast_ref::<super::vex::VexEntity>() {
+                    vex_mob.set_owner(evoker_ent.entity_uuid);
+                    vex_mob.set_limited_life(20 * (30 + rand::random_range(0..90)));
+                }
                 world.spawn_entity(vex);
             }
         }

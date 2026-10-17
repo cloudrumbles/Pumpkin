@@ -959,7 +959,7 @@ def _decode_palette_entry(value: NbtValue) -> StoredBlockState:
             "block-state palette entry is not a string or compound"
         )
 
-    # Pumpkin writes the established Name/Properties shape. Vanilla 26.3 uses
+    # Older Pumpkin saves use Name/Properties. Java 26.3 and current Pumpkin use
     # id/properties when any entry has properties, with an empty-name key for
     # property-free entries in that compound palette.
     raw_name = value.get("Name", value.get("id", value.get("")))

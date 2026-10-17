@@ -325,6 +325,8 @@ impl PaletteEntry {
         let name = entry_compound
             .get_string("id")
             .or_else(|| entry_compound.get_string("Name"))
+            // NBT encodes a scalar in a heterogeneous list as an empty-key compound.
+            .or_else(|| entry_compound.get_string(""))
             .ok_or(TemplateError::MissingField("palette.id"))?
             .to_string();
 
@@ -1268,7 +1270,7 @@ impl StructureTemplate {
         ];
         tag.put_list(Self::SIZE_TAG, size_tags);
 
-        tag.put_int("DataVersion", 4189);
+        tag.put_int("DataVersion", pumpkin_data::version::DATA_VERSION);
 
         tag
     }

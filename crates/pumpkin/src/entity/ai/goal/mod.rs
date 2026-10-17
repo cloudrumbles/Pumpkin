@@ -3,13 +3,16 @@ use std::{any::TypeId, ops::BitOr, ptr};
 
 pub mod active_target;
 pub mod ambient_stand;
+pub mod aquatic;
 pub mod avoid_entity;
 pub mod beg;
 pub mod blaze_attack;
 pub mod bow_attack;
 pub mod break_door;
 pub mod breed;
+pub mod breeze_attack;
 pub mod chase_player;
+pub mod copper_transport;
 pub mod creeper_ignite;
 pub mod destroy_egg;
 pub mod door_interact;
@@ -19,10 +22,15 @@ pub mod flee_sun;
 pub mod follow_mob;
 pub mod follow_owner;
 pub mod follow_parent;
+pub mod frog_spawn;
+pub mod frog_tongue;
 pub mod go_to_wanted_item;
 pub mod goal_selector;
+pub mod goat_ram;
+pub mod guardian_attack;
 pub mod interact;
 pub mod leap_at_target;
+pub mod long_jump;
 pub mod look_around;
 pub mod look_at_entity;
 pub mod melee_attack;
@@ -55,6 +63,21 @@ pub mod wander_around;
 pub mod water_avoiding_random_flying;
 pub mod work_at_job_site;
 pub mod zombie_attack;
+
+pub(crate) fn is_valid_attack_target(
+    mob: &dyn Mob,
+    target: &dyn crate::entity::EntityBase,
+) -> bool {
+    target.get_entity().is_alive()
+        && target.get_entity().entity_id != mob.get_entity().entity_id
+        && !target.is_spectator()
+        && !target
+            .get_player()
+            .is_some_and(|player| player.gamemode.load() == pumpkin_util::GameMode::Creative)
+        && target
+            .get_living_entity()
+            .is_some_and(|living| living.is_alive() && mob.can_attack(living))
+}
 
 #[must_use]
 pub const fn to_goal_ticks(server_ticks: i32) -> i32 {

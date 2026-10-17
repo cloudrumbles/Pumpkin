@@ -44,6 +44,12 @@ impl GoatEntity {
             has_right_horn: AtomicBool::new(true),
         };
         let mob_arc = Arc::new(goat);
+        *mob_arc
+            .mob_entity
+            .brain
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) =
+            mob_arc.make_brain(&crate::entity::ai::brain::memory::PackedMemories::empty());
         let mob_weak: Weak<dyn Mob> = {
             let mob_arc: Arc<dyn Mob> = mob_arc.clone();
             Arc::downgrade(&mob_arc)
@@ -61,6 +67,14 @@ impl GoatEntity {
             goal_selector.add_goal(2, BreedGoal::new(1.0));
             goal_selector.add_goal(3, Box::new(TemptGoal::new(1.25, TEMPT_ITEMS, false)));
             goal_selector.add_goal(4, Box::new(FollowParentGoal::new(1.25)));
+            goal_selector.add_goal(
+                5,
+                Box::<crate::entity::ai::goal::goat_ram::GoatRamGoal>::default(),
+            );
+            goal_selector.add_goal(
+                5,
+                crate::entity::ai::goal::long_jump::LongJumpGoal::new(5, 5, 600, 1200),
+            );
             goal_selector.add_goal(6, Box::new(WanderAroundGoal::new(1.0)));
             goal_selector.add_goal(
                 7,
@@ -113,6 +127,32 @@ impl GoatEntity {
             has_horn,
         );
     }
+
+    pub fn drop_horn(&self) -> bool {
+        if self.is_baby() || (!self.has_left_horn() && !self.has_right_horn()) {
+            return false;
+        }
+        if self.has_left_horn() && (!self.has_right_horn() || rand::random::<bool>()) {
+            self.set_has_left_horn(false);
+        } else {
+            self.set_has_right_horn(false);
+        }
+        let entity = self.get_entity();
+        let world = entity.world.load_full();
+        let item = crate::entity::item::ItemEntity::new_with_velocity(
+            Entity::new(world.clone(), entity.pos.load(), &EntityType::ITEM),
+            ItemStack::new(1, &Item::GOAT_HORN),
+            pumpkin_util::math::vector3::Vector3::new(
+                rand::random_range(-0.2..0.2),
+                rand::random_range(0.3..0.7),
+                rand::random_range(-0.2..0.2),
+            ),
+            10,
+        );
+        world.spawn_entity(Arc::new(item));
+        entity.play_sound(Sound::EntityGoatHornBreak);
+        true
+    }
 }
 
 impl AgeableMob for GoatEntity {
@@ -129,6 +169,25 @@ impl Animal for GoatEntity {
 }
 
 impl Mob for GoatEntity {
+    fn make_brain(
+        &self,
+        packed: &crate::entity::ai::brain::memory::PackedMemories,
+    ) -> crate::entity::ai::brain::Brain {
+        use crate::entity::ai::brain::memory::types;
+        let mut brain = crate::entity::ai::brain::Brain::default();
+        crate::entity::ai::goal::long_jump::register_jump_memories(&mut brain, 600, 1200);
+        brain.register_memory(types::RAM_COOLDOWN_TICKS.id());
+        brain.register_memory(types::RAM_TARGET.id());
+        brain.set(types::RAM_COOLDOWN_TICKS, rand::random_range(600..=6000));
+        brain.load_packed(packed);
+        brain
+    }
+
+    fn custom_server_ai_step(&self, _caller: &dyn EntityBase) {
+        use crate::entity::ai::{brain::memory::types, goal::long_jump::tick_cooldown};
+        tick_cooldown(self, types::LONG_JUMP_COOLDOWN_TICKS);
+        tick_cooldown(self, types::RAM_COOLDOWN_TICKS);
+    }
     fn as_ageable(&self) -> Option<&dyn AgeableMob> {
         Some(self)
     }

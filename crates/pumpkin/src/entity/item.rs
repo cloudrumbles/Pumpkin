@@ -45,6 +45,23 @@ struct ItemMergeReservation<'a> {
     high: &'a AtomicBool,
 }
 
+struct ItemPickupReservation<'a>(&'a AtomicBool);
+
+impl<'a> ItemPickupReservation<'a> {
+    fn acquire(item: &'a ItemEntity) -> Option<Self> {
+        item.merge_reserved
+            .compare_exchange(false, true, AcqRel, Ordering::Acquire)
+            .ok()?;
+        Some(Self(&item.merge_reserved))
+    }
+}
+
+impl Drop for ItemPickupReservation<'_> {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::Release);
+    }
+}
+
 impl<'a> ItemMergeReservation<'a> {
     fn acquire(low: &'a ItemEntity, high: &'a ItemEntity) -> Option<Self> {
         if std::ptr::eq(low, high)
@@ -164,6 +181,53 @@ impl ItemEntity {
 
     pub fn set_pickup_delay(&self, pickup_delay: u8) {
         self.pickup_delay.store(pickup_delay, Ordering::Relaxed);
+    }
+
+    /// Removes items while holding the stack lock, so simultaneous mob and
+    /// player pickups cannot each receive a copy of the same stack.
+    pub fn take_for_mob(
+        &self,
+        collector: &LivingEntity,
+        limit: u8,
+        accepts: impl FnOnce(&ItemStack) -> bool,
+    ) -> Option<ItemStack> {
+        let _reservation = ItemPickupReservation::acquire(self)?;
+        if limit == 0
+            || self.get_pickup_delay() > 0
+            || self.never_pickup.load(Relaxed)
+            || !self.entity.is_alive()
+        {
+            return None;
+        }
+        let taken = {
+            let stack = self
+                .item_stack
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if stack.is_empty() || !accepts(&stack) {
+                return None;
+            }
+            let mut taken = stack.clone();
+            taken.item_count = taken.item_count.min(limit).min(stack.get_max_stack_size());
+            taken
+        };
+        if !collector.pickup(&self.entity, u32::from(taken.item_count)) {
+            return None;
+        }
+        let empty = {
+            let mut stack = self
+                .item_stack
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            stack.item_count -= taken.item_count;
+            stack.is_empty()
+        };
+        if empty {
+            self.entity.remove();
+        } else {
+            self.init_data_tracker();
+        }
+        Some(taken)
     }
 
     pub const fn get_entity(&self) -> &Entity {
@@ -607,7 +671,11 @@ impl EntityBase for ItemEntity {
     }
 
     fn on_player_collision(&self, player: &Arc<Player>) {
+        let Some(_reservation) = ItemPickupReservation::acquire(self) else {
+            return;
+        };
         if self.pickup_delay.load(Ordering::Relaxed) > 0
+            || self.never_pickup.load(Relaxed)
             || player.living_entity.health.load() <= 0.0
             || player.is_spectator()
         {

@@ -15,8 +15,8 @@ use crate::entity::{
     Entity, EntityBase,
     ageable::{AgeableData, AgeableMob},
     ai::goal::{
-        look_around::RandomLookAroundGoal, look_at_entity::LookAtEntityGoal, swim::SwimGoal,
-        tempt::TemptGoal, wander_around::WanderAroundGoal,
+        look_around::RandomLookAroundGoal, look_at_entity::LookAtEntityGoal, tempt::TemptGoal,
+        wander_around::WanderAroundGoal,
     },
     mob::{Mob, MobEntity},
     passive::animal::Animal,
@@ -81,6 +81,11 @@ pub struct FrogEntity {
 impl FrogEntity {
     pub fn new(entity: Entity) -> Arc<Self> {
         let mob_entity = MobEntity::new(entity);
+        *mob_entity
+            .navigator
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) =
+            crate::entity::ai::pathfinder::Navigator::amphibious(false);
         let frog = Self {
             mob_entity,
             ageable_data: AgeableData::default(),
@@ -88,6 +93,12 @@ impl FrogEntity {
             tongue_target_id: AtomicI32::new(-1),
         };
         let mob_arc = Arc::new(frog);
+        *mob_arc
+            .mob_entity
+            .brain
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) =
+            mob_arc.make_brain(&crate::entity::ai::brain::memory::PackedMemories::empty());
         let mob_weak: Weak<dyn Mob> = {
             let mob_arc: Arc<dyn Mob> = mob_arc.clone();
             Arc::downgrade(&mob_arc)
@@ -100,9 +111,35 @@ impl FrogEntity {
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
 
-            goal_selector.add_goal(0, Box::new(SwimGoal::default()));
-            goal_selector.add_goal(1, Box::new(TemptGoal::new(1.0, FROG_FOOD, false)));
-            goal_selector.add_goal(2, Box::new(WanderAroundGoal::new(1.0)));
+            goal_selector.add_goal(
+                0,
+                crate::entity::ai::goal::escape_danger::EscapeDangerGoal::new(2.0),
+            );
+            goal_selector.add_goal(1, crate::entity::ai::goal::breed::BreedGoal::new(1.0));
+            goal_selector.add_goal(2, Box::new(TemptGoal::new(1.25, FROG_FOOD, false)));
+            goal_selector.add_goal(
+                3,
+                Box::<crate::entity::ai::goal::frog_tongue::FrogTongueGoal>::default(),
+            );
+            goal_selector.add_goal(
+                4,
+                Box::<crate::entity::ai::goal::frog_spawn::FrogSpawnGoal>::default(),
+            );
+            goal_selector.add_goal(
+                5,
+                crate::entity::ai::goal::long_jump::LongJumpGoal::new(4, 2, 100, 140),
+            );
+            goal_selector.add_goal(
+                6,
+                Box::<crate::entity::ai::goal::frog_spawn::FrogCroakGoal>::default(),
+            );
+            goal_selector.add_goal(
+                7,
+                Box::new(crate::entity::ai::goal::aquatic::RandomSwimGoal::new(
+                    0.75, 40,
+                )),
+            );
+            goal_selector.add_goal(8, Box::new(WanderAroundGoal::new(1.0)));
             goal_selector.add_goal(
                 3,
                 LookAtEntityGoal::with_default(mob_weak, &EntityType::PLAYER, 6.0),
@@ -126,9 +163,21 @@ impl FrogEntity {
             VarInt(variant.id()),
         );
     }
+
+    pub fn set_tongue_target(&self, id: Option<i32>) {
+        self.tongue_target_id
+            .store(id.unwrap_or(-1), Ordering::Relaxed);
+        self.get_entity().set_synced_data(
+            pumpkin_data::tracked_data::frog::DATA_TONGUE_TARGET_ID,
+            VarInt(id.map_or(0, |id| id + 1)),
+        );
+    }
 }
 
 impl AgeableMob for FrogEntity {
+    fn can_be_a_baby(&self) -> bool {
+        false
+    }
     fn get_ageable_data(&self) -> &AgeableData {
         &self.ageable_data
     }
@@ -142,6 +191,39 @@ impl Animal for FrogEntity {
 }
 
 impl Mob for FrogEntity {
+    fn make_brain(
+        &self,
+        packed: &crate::entity::ai::brain::memory::PackedMemories,
+    ) -> crate::entity::ai::brain::Brain {
+        let mut brain = crate::entity::ai::brain::Brain::default();
+        crate::entity::ai::goal::long_jump::register_jump_memories(&mut brain, 100, 140);
+        brain.register_memory(crate::entity::ai::brain::memory::types::IS_PREGNANT.id());
+        brain.load_packed(packed);
+        brain
+    }
+
+    fn create_breed_offspring(
+        &self,
+        _world: &Arc<crate::world::World>,
+    ) -> Option<Arc<dyn EntityBase>> {
+        self.mob_entity
+            .brain
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .set(crate::entity::ai::brain::memory::types::IS_PREGNANT, ());
+        None
+    }
+
+    fn custom_server_ai_step(&self, _caller: &dyn EntityBase) {
+        crate::entity::ai::goal::long_jump::tick_cooldown(
+            self,
+            crate::entity::ai::brain::memory::types::LONG_JUMP_COOLDOWN_TICKS,
+        );
+    }
+
+    fn get_mob_gravity(&self) -> f64 {
+        crate::entity::ai::goal::aquatic::aquatic_gravity(&self.mob_entity)
+    }
     fn as_ageable(&self) -> Option<&dyn AgeableMob> {
         Some(self)
     }
@@ -155,6 +237,7 @@ impl Mob for FrogEntity {
     }
 
     fn mob_read_nbt(&self, nbt: &NbtCompound) {
+        self.set_tongue_target(None);
         if let Some(variant_str) = nbt.get_string("variant") {
             self.set_variant(FrogVariant::from_name(variant_str));
         }
@@ -174,6 +257,7 @@ impl Mob for FrogEntity {
 
     fn mob_init_data_tracker(&self) {
         let entity = self.get_entity();
+        self.set_tongue_target(None);
         let is_baby = entity.age.load(Ordering::Relaxed) < 0;
         if is_baby {
             entity.set_synced_data(pumpkin_data::tracked_data::frog::BABY_ID, true);

@@ -3,6 +3,7 @@ use std::sync::{
     atomic::{AtomicI32, AtomicI64, Ordering},
 };
 
+use crossbeam::atomic::AtomicCell;
 use pumpkin_data::entity::EntityType;
 use pumpkin_data::item::Item;
 use pumpkin_data::item_stack::ItemStack;
@@ -10,10 +11,12 @@ use pumpkin_data::sound::{Sound, SoundCategory};
 use pumpkin_data::tag::{self, Taggable};
 use pumpkin_nbt::compound::NbtCompound;
 use pumpkin_protocol::codec::var_int::VarInt;
+use pumpkin_util::math::position::BlockPos;
 
 use crate::entity::{
     Entity, EntityBase,
     ai::goal::{
+        copper_transport::CopperTransportGoal, escape_danger::EscapeDangerGoal,
         look_around::RandomLookAroundGoal, look_at_entity::LookAtEntityGoal, swim::SwimGoal,
         wander_around::WanderAroundGoal,
     },
@@ -104,6 +107,7 @@ pub struct CopperGolemEntity {
     pub weather_state: AtomicI32,
     pub state: AtomicI32,
     pub next_weathering_tick: AtomicI64,
+    pub(crate) opened_chest: AtomicCell<Option<BlockPos>>,
 }
 
 impl CopperGolemEntity {
@@ -114,6 +118,7 @@ impl CopperGolemEntity {
             weather_state: AtomicI32::new(WeatherState::Unaffected.id()),
             state: AtomicI32::new(CopperGolemState::Idle.id()),
             next_weathering_tick: AtomicI64::new(-1),
+            opened_chest: AtomicCell::new(None),
         };
         let mob_arc = Arc::new(golem);
         let mob_weak: Weak<dyn Mob> = {
@@ -129,12 +134,14 @@ impl CopperGolemEntity {
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
 
             goal_selector.add_goal(0, Box::new(SwimGoal::default()));
-            goal_selector.add_goal(1, Box::new(WanderAroundGoal::new(1.0)));
+            goal_selector.add_goal(0, EscapeDangerGoal::new(1.5));
+            goal_selector.add_goal(1, Box::new(CopperTransportGoal::default()));
+            goal_selector.add_goal(6, Box::new(WanderAroundGoal::new(1.0)));
             goal_selector.add_goal(
-                2,
+                7,
                 LookAtEntityGoal::with_default(mob_weak, &EntityType::PLAYER, 6.0),
             );
-            goal_selector.add_goal(3, Box::new(RandomLookAroundGoal::default()));
+            goal_selector.add_goal(8, Box::new(RandomLookAroundGoal::default()));
         };
 
         mob_arc

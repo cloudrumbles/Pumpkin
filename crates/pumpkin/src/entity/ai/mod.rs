@@ -6,3 +6,4 @@ pub mod random_pos;
 pub mod sensing;
 pub mod target_predicate;
 pub mod util;
+pub mod vibration;

@@ -36,6 +36,7 @@ impl NoteBlock {
                 return;
             }
             world.add_synced_block_event(*pos, 0, 0);
+            world.emit_game_event("note_block_play", pos.to_centered_f64());
         }
     }
     fn get_note_pitch(note: u16) -> f32 {
