@@ -14,6 +14,7 @@ from tools.ironore.qualify import (
     Deadline,
     NbtReader,
     NbtValue,
+    QualificationError,
     Results,
     ServerProcess,
     block_placement_succeeded,
@@ -47,6 +48,10 @@ def named_compound(name: str, children: bytes) -> bytes:
 
 
 class CodecTests(unittest.TestCase):
+    def test_pumpkin_block_placement_feedback_is_recognized(self) -> None:
+        result = CommandResult("setblock 20 98 20 minecraft:stone", ("Block placed",))
+        self.assertTrue(block_placement_succeeded(result, 20, 98, 20))
+
     def test_signed_varints_round_trip(self) -> None:
         for value in (0, 1, 127, 128, 255, 2**31 - 1, -1, -(2**31)):
             encoded = encode_varint(value)
@@ -269,8 +274,13 @@ class CodecTests(unittest.TestCase):
 
     def test_vanilla_fixture_disables_whitelist_and_empty_pause(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
-            run_dir = Path(directory)
-            write_vanilla_config(run_dir, 25566)
+            root = Path(directory)
+            run_dir = root / "run"
+            run_dir.mkdir()
+            eula = root / "accepted-eula.txt"
+            eula.write_text("# Unit-test fixture; no server is launched.\neula=true\n")
+            write_vanilla_config(run_dir, 25566, eula)
+            self.assertEqual((run_dir / "eula.txt").read_text(), eula.read_text())
             properties = dict(
                 line.split("=", 1)
                 for line in (run_dir / "server.properties").read_text().splitlines()
@@ -278,6 +288,29 @@ class CodecTests(unittest.TestCase):
         self.assertEqual(properties["white-list"], "false")
         self.assertEqual(properties["enforce-whitelist"], "false")
         self.assertEqual(properties["pause-when-empty-seconds"], "-1")
+
+    def test_vanilla_fixture_rejects_unaccepted_eula(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            run_dir = root / "run"
+            run_dir.mkdir()
+            eula = root / "unaccepted-eula.txt"
+            eula.write_text("eula=false\n")
+            with self.assertRaises(QualificationError):
+                write_vanilla_config(run_dir, 25566, eula)
+            self.assertFalse((run_dir / "eula.txt").exists())
+            self.assertFalse((run_dir / "server.properties").exists())
+
+    def test_vanilla_fixture_does_not_create_missing_eula(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            run_dir = root / "run"
+            run_dir.mkdir()
+            eula = root / "missing-eula.txt"
+            with self.assertRaises(FileNotFoundError):
+                write_vanilla_config(run_dir, 25566, eula)
+            self.assertFalse(eula.exists())
+            self.assertFalse((run_dir / "eula.txt").exists())
 
 
 if __name__ == "__main__":

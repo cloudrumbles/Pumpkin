@@ -2356,12 +2356,15 @@ impl DataComponentCodec<Self> for EntityDataImpl {
 
 impl DataComponentCodec<Self> for BucketEntityDataImpl {
     fn serialize(&self, seq: &mut impl NetworkWriteExt) -> Result<(), WritingError> {
-        seq.write_nbt(NbtTag::Compound(pumpkin_nbt::compound::NbtCompound::new()))
+        seq.write_nbt(NbtTag::Compound(self.nbt.clone().unwrap_or_default()))
     }
-
     fn deserialize(seq: &mut impl NetworkReadExt) -> Result<Self, ReadingError> {
-        let _nbt = seq.get_nbt_with_version(&JavaMinecraftVersion::V_26_2)?;
-        Ok(Self)
+        let tag = seq.get_nbt_with_version(&JavaMinecraftVersion::V_26_3)?;
+        let nbt = match tag {
+            Some(NbtTag::Compound(nbt)) => Some(nbt),
+            _ => None,
+        };
+        Ok(Self { nbt })
     }
 }
 

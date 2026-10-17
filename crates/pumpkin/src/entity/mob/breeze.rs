@@ -33,6 +33,10 @@ impl BreezeEntity {
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
 
             goal_selector.add_goal(0, Box::new(SwimGoal::default()));
+            goal_selector.add_goal(
+                1,
+                Box::new(crate::entity::ai::goal::breeze_attack::BreezeAttackGoal::default()),
+            );
             goal_selector.add_goal(5, Box::new(WanderAroundGoal::new(1.0)));
             goal_selector.add_goal(
                 6,
@@ -48,6 +52,14 @@ impl BreezeEntity {
             target_selector.add_goal(
                 1,
                 ActiveTargetGoal::with_default(&mob_arc.mob_entity, &EntityType::PLAYER, true),
+            );
+            target_selector.add_goal(
+                2,
+                ActiveTargetGoal::with_default(&mob_arc.mob_entity, &EntityType::IRON_GOLEM, true),
+            );
+            target_selector.add_goal(
+                0,
+                Box::new(crate::entity::ai::goal::revenge::RevengeGoal::new(true)),
             );
         };
 

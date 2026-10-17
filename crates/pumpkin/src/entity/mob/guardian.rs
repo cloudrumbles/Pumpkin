@@ -1,16 +1,17 @@
-use std::sync::atomic::Ordering;
-use std::sync::{Arc, Weak};
+use std::sync::{Arc, Weak, atomic::Ordering};
 
-use pumpkin_data::entity::EntityType;
-use pumpkin_data::{damage::DamageType, sound::Sound};
+use pumpkin_data::{damage::DamageType, entity::EntityType, sound::Sound, tracked_data};
 
-use crate::entity::custom_sound::CustomSound;
 use crate::entity::{
     Entity, EntityBase,
     ai::goal::{
-        active_target::ActiveTargetGoal, look_around::RandomLookAroundGoal,
-        look_at_entity::LookAtEntityGoal, swim::SwimGoal, wander_around::WanderAroundGoal,
+        active_target::ActiveTargetGoal,
+        aquatic::{self, RandomSwimGoal},
+        guardian_attack::{GuardianAttackGoal, is_guardian_prey},
+        look_around::RandomLookAroundGoal,
+        look_at_entity::LookAtEntityGoal,
     },
+    custom_sound::CustomSound,
     mob::{Mob, MobEntity},
 };
 
@@ -20,75 +21,112 @@ pub struct GuardianEntity {
 
 impl GuardianEntity {
     pub fn new(entity: Entity) -> Arc<Self> {
-        let mob_entity = MobEntity::new(entity);
-        let guardian = Self { mob_entity };
-        let mob_arc = Arc::new(guardian);
-        let mob_weak: Weak<dyn Mob> = {
-            let mob_arc: Arc<dyn Mob> = mob_arc.clone();
-            Arc::downgrade(&mob_arc)
-        };
+        let guardian = Arc::new(Self {
+            mob_entity: MobEntity::new(entity),
+        });
+        let mob: Arc<dyn Mob> = guardian.clone();
+        register_guardian_ai(&guardian.mob_entity, Arc::downgrade(&mob), false);
+        guardian
+    }
+}
 
-        {
-            let mut goal_selector = mob_arc
-                .mob_entity
-                .goals_selector
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
+pub(super) fn register_guardian_ai(mob: &MobEntity, owner: Weak<dyn Mob>, elder: bool) {
+    aquatic::configure_swimming(mob);
+    let mut goals = mob
+        .goals_selector
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    goals.add_goal(4, Box::new(GuardianAttackGoal::new(elder)));
+    goals.add_goal(
+        7,
+        Box::new(RandomSwimGoal::new(1.0, if elder { 400 } else { 80 })),
+    );
+    goals.add_goal(
+        8,
+        LookAtEntityGoal::with_default(owner.clone(), &EntityType::PLAYER, 8.0),
+    );
+    goals.add_goal(9, Box::new(RandomLookAroundGoal::default()));
+    drop(goals);
+    mob.target_selector
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .add_goal(
+            1,
+            ActiveTargetGoal::predicated(mob, 10, true, move |target, _world| {
+                is_guardian_prey(target.entity.entity_type)
+                    && owner.upgrade().is_some_and(|guardian| {
+                        guardian
+                            .get_entity()
+                            .pos
+                            .load()
+                            .squared_distance_to_vec(&target.entity.pos.load())
+                            > 9.0
+                    })
+            }),
+        );
+}
 
-            goal_selector.add_goal(0, Box::new(SwimGoal::default()));
-            goal_selector.add_goal(4, Box::new(WanderAroundGoal::new(1.0)));
-            goal_selector.add_goal(
-                5,
-                LookAtEntityGoal::with_default(mob_weak.clone(), &EntityType::PLAYER, 8.0),
-            );
-            goal_selector.add_goal(6, Box::new(RandomLookAroundGoal::default()));
+pub(super) fn update_guardian_movement(mob: &dyn Mob) {
+    aquatic::flop_with_strength(mob, 0.5);
+    let moving = mob
+        .get_mob_entity()
+        .living_entity
+        .movement_input
+        .load()
+        .length_squared()
+        > 0.0001;
+    mob.get_entity()
+        .set_synced_data(tracked_data::guardian::DATA_ID_MOVING, moving);
+}
 
-            let mut target_selector = mob_arc
-                .mob_entity
-                .target_selector
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            target_selector.add_goal(
-                1,
-                ActiveTargetGoal::with_default(&mob_arc.mob_entity, &EntityType::PLAYER, true),
-            );
-            target_selector.add_goal(
-                2,
-                ActiveTargetGoal::with_default(&mob_arc.mob_entity, &EntityType::SQUID, true),
-            );
-            target_selector.add_goal(
-                2,
-                ActiveTargetGoal::with_default(&mob_arc.mob_entity, &EntityType::GLOW_SQUID, true),
-            );
-            target_selector.add_goal(
-                3,
-                ActiveTargetGoal::with_default(&mob_arc.mob_entity, &EntityType::AXOLOTL, true),
-            );
-        };
-
-        mob_arc
+pub(super) fn guardian_thorns(
+    mob: &dyn Mob,
+    damage_type: DamageType,
+    source: Option<&dyn EntityBase>,
+) {
+    if damage_type == DamageType::THORNS
+        || damage_type == DamageType::MAGIC
+        || damage_type == DamageType::INDIRECT_MAGIC
+        || mob
+            .get_mob_entity()
+            .living_entity
+            .movement_input
+            .load()
+            .length_squared()
+            > 0.0001
+    {
+        return;
+    }
+    if let Some(source) = source {
+        source.damage_with_context(
+            source,
+            2.0,
+            DamageType::THORNS,
+            None,
+            Some(mob.get_entity()),
+            Some(mob),
+        );
     }
 }
 
 impl CustomSound for GuardianEntity {
     fn hurt_sound(&self) -> Option<Sound> {
-        let entity = self.get_entity();
-        let is_water = entity.touching_water.load(Ordering::Relaxed);
-        Some(if is_water {
-            Sound::EntityGuardianHurt
-        } else {
-            Sound::EntityGuardianHurtLand
-        })
+        Some(
+            if self.get_entity().touching_water.load(Ordering::Relaxed) {
+                Sound::EntityGuardianHurt
+            } else {
+                Sound::EntityGuardianHurtLand
+            },
+        )
     }
-
     fn death_sound(&self) -> Option<Sound> {
-        let entity = self.get_entity();
-        let is_water = entity.touching_water.load(Ordering::Relaxed);
-        Some(if is_water {
-            Sound::EntityGuardianDeath
-        } else {
-            Sound::EntityGuardianDeathLand
-        })
+        Some(
+            if self.get_entity().touching_water.load(Ordering::Relaxed) {
+                Sound::EntityGuardianDeath
+            } else {
+                Sound::EntityGuardianDeathLand
+            },
+        )
     }
 }
 
@@ -96,12 +134,16 @@ impl Mob for GuardianEntity {
     fn get_mob_entity(&self) -> &MobEntity {
         &self.mob_entity
     }
-
-    fn on_damage(&self, _damage_type: DamageType, source: Option<&dyn EntityBase>) {
-        if let Some(src) = source
-            && let Some(living) = src.get_living_entity()
-        {
-            let _ = living.damage(src, 2.0, DamageType::THORNS);
-        }
+    fn as_custom_sound(&self) -> Option<&dyn CustomSound> {
+        Some(self)
+    }
+    fn get_mob_gravity(&self) -> f64 {
+        aquatic::aquatic_gravity(&self.mob_entity)
+    }
+    fn custom_server_ai_step(&self, _caller: &dyn EntityBase) {
+        update_guardian_movement(self);
+    }
+    fn on_damage(&self, damage_type: DamageType, source: Option<&dyn EntityBase>) {
+        guardian_thorns(self, damage_type, source);
     }
 }

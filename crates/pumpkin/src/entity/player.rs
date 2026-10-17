@@ -1,5 +1,6 @@
 pub mod advancement;
 pub mod statistics;
+mod teleport;
 
 use core::f32;
 use std::collections::{HashMap, VecDeque};
@@ -356,7 +357,7 @@ fn read_root_vehicle(nbt: &NbtCompound) -> Option<Uuid> {
     ))
 }
 
-pub const DATA_VERSION: i32 = 4903; // 26.2
+pub use pumpkin_data::version::DATA_VERSION;
 
 /// Food exhaustion applied for every block a player mines.
 ///
@@ -4074,13 +4075,14 @@ impl Player {
         }}
     }
 
+    pub(crate) fn next_teleport_id(&self) -> i32 {
+        teleport::next_id(&self.teleport_id_count)
+    }
+
     /// `yaw` and `pitch` are in degrees.
     /// Rarly used, for example when waking up the player from a bed or their first time spawn. Otherwise, the `teleport` method should be used.
     /// The player should respond with the `SConfirmTeleport` packet.
     pub fn request_teleport(&self, position: Vector3<f64>, yaw: f32, pitch: f32) {
-        // This is the ultra special magic code used to create the teleport id
-        // This returns the old value
-        // This operation wraps around on overflow.
         let Some(server) = self.world().server.upgrade() else {
             return;
         };
@@ -4097,9 +4099,8 @@ impl Player {
             }
         }
 
-        let i = self.teleport_id_count.fetch_add(1, Ordering::Relaxed);
+        let teleport_id = self.next_teleport_id();
         self.chunk_send_epoch.fetch_add(1, Ordering::Relaxed);
-        let teleport_id = i + 1;
         self.living_entity.entity.set_pos(position);
         let entity = &self.living_entity.entity;
         entity.set_rotation(yaw, pitch);

@@ -109,6 +109,77 @@ const fn get_fill_sound(item: &Item) -> Sound {
     }
 }
 
+/// Captures a living mob once, retaining only the data a bucket may carry.
+pub(crate) fn try_capture_mob(
+    player: &Player,
+    held: &mut ItemStack,
+    mob: &dyn EntityBase,
+    bucket: &'static Item,
+    sound: Sound,
+) -> bool {
+    if held.item != &Item::WATER_BUCKET
+        || !mob
+            .get_living_entity()
+            .is_some_and(|living| living.is_alive())
+    {
+        return false;
+    }
+    let entity = mob.get_entity();
+    let world = entity.world.load();
+    if let Some(server) = world.server.upgrade()
+        && let Some(player) = world.get_player_by_uuid(player.gameprofile.id)
+    {
+        let mut event =
+            crate::plugin::api::events::player::player_bucket_entity::PlayerBucketEntityEvent {
+                player,
+                entity_id: entity.entity_id,
+                bucket_item: bucket.registry_key.to_string(),
+                cancelled: false,
+            };
+        server.plugin_manager.fire_blocking(&server, &mut event);
+        if event.cancelled {
+            return false;
+        }
+    }
+    let mut saved = pumpkin_nbt::compound::NbtCompound::new();
+    mob.write_nbt(&mut saved);
+    saved.child_tags.retain(|key, _| {
+        matches!(
+            key.as_ref(),
+            "Health"
+                | "Age"
+                | "AgeLocked"
+                | "Variant"
+                | "variant"
+                | "NoAI"
+                | "Silent"
+                | "NoGravity"
+                | "Glowing"
+                | "Invulnerable"
+                | "CustomName"
+                | "CustomNameVisible"
+                | "HuntingCooldown"
+                | "Moistness"
+        )
+    });
+    let mut filled = ItemStack::new(1, bucket);
+    filled.set_data_component(pumpkin_data::data_component_impl::BucketEntityDataImpl {
+        nbt: Some(saved),
+    });
+    if player.gamemode.load() != GameMode::Creative && held.item_count == 1 {
+        *held = filled;
+    } else {
+        held.decrement_unless_creative(player.gamemode.load(), 1);
+        player.inventory.insert_stack_anywhere(&mut filled);
+        if !filled.is_empty() {
+            world.drop_stack(&player.position().to_block_pos(), filled);
+        }
+    }
+    world.play_sound(sound, SoundCategory::Neutral, &entity.pos.load());
+    entity.remove();
+    true
+}
+
 fn give_player_bucket_item(player: &Player, item: &'static Item) {
     if player.gamemode.load() == GameMode::Creative {
         let has_item = {
@@ -436,6 +507,20 @@ impl ItemBehaviour for FilledBucketItem {
                 f64::from(place_pos.0.z) + 0.5,
             );
             let mob = from_type(entity_type, spawn_coord, &world, Uuid::new_v4());
+            let stack = player.inventory.held_item();
+            let mut saved = pumpkin_nbt::compound::NbtCompound::new();
+            mob.write_nbt(&mut saved);
+            if let Some(data) = stack
+                .get_data_component::<pumpkin_data::data_component_impl::BucketEntityDataImpl>()
+                && let Some(data) = &data.nbt
+            {
+                for (key, value) in &data.child_tags {
+                    saved.child_tags.insert(key.clone(), value.clone());
+                }
+            }
+            saved.put_bool("FromBucket", true);
+            saved.put_bool("PersistenceRequired", true);
+            mob.read_nbt_non_mut(&saved);
             world.spawn_entity(mob);
         }
 
@@ -467,11 +552,7 @@ impl ItemBehaviour for FilledBucketItem {
             };
 
             if let Some((mob_bucket, sound)) = result_item {
-                let ent = entity.get_entity();
-                let world = ent.world.load();
-                world.play_sound(sound, SoundCategory::Neutral, &ent.pos.load());
-                give_player_bucket_item(player, mob_bucket);
-                ent.remove();
+                try_capture_mob(player, item, entity.as_ref(), mob_bucket, sound);
             }
         }
     }

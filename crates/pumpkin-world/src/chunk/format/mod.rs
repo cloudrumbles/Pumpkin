@@ -95,6 +95,13 @@ fn extract_u16_array(tag: &pumpkin_nbt::tag::NbtTag) -> Option<Box<[BlockStateId
                     pumpkin_nbt::tag::NbtTag::Short(x) => BlockStateId::new_or_air(*x as u16),
                     pumpkin_nbt::tag::NbtTag::Byte(x) => BlockStateId::new_or_air(*x as u16),
                     pumpkin_nbt::tag::NbtTag::Long(x) => BlockStateId::new_or_air(*x as u16),
+                    pumpkin_nbt::tag::NbtTag::String(name) => {
+                        let entry = crate::generation::structure::template::PaletteEntry {
+                            name: name.to_string(), properties: Vec::new(),
+                        };
+                        crate::generation::structure::template::BlockStateResolver::resolve_simple(&entry)
+                            .map_or(BlockStateId::AIR, |state| state.id)
+                    }
                     pumpkin_nbt::tag::NbtTag::Compound(compound) => {
                         if let Ok(entry) =
                             crate::generation::structure::template::PaletteEntry::from_nbt_compound(
@@ -507,7 +514,7 @@ impl ChunkData {
                     } else {
                         format!("minecraft:{}", block.name)
                     };
-                    comp.put_string("Name", name);
+                    comp.put_string("id", name);
                     if let Some(props) = block.properties(id) {
                         let prop_vec = props.to_props();
                         if !prop_vec.is_empty() {
@@ -515,7 +522,7 @@ impl ChunkData {
                             for (k, v) in prop_vec {
                                 props_comp.put_string(k, v.to_string());
                             }
-                            comp.put_compound("Properties", props_comp);
+                            comp.put_compound("properties", props_comp);
                         }
                     }
                     NbtTag::Compound(comp)
@@ -929,6 +936,34 @@ mod tests {
     use pumpkin_data::Block;
     use pumpkin_nbt::compound::NbtCompound;
     use pumpkin_nbt::tag::NbtTag;
+
+    #[test]
+    fn read_26_3_scalar_and_heterogeneous_block_palettes() {
+        let strings = NbtTag::List(vec![
+            NbtTag::String("minecraft:stone".into()),
+            NbtTag::String("minecraft:water".into()),
+        ]);
+        let ids = extract_u16_array(&strings).unwrap();
+        assert_eq!(ids[0], Block::STONE.default_state.id);
+        assert_eq!(ids[1], Block::WATER.default_state.id);
+        let mut scalar = NbtCompound::new();
+        scalar.put_string("", "minecraft:stone".to_string());
+        let mut state = NbtCompound::new();
+        state.put_string("id", "minecraft:oak_stairs".to_string());
+        let mut properties = NbtCompound::new();
+        properties.put_string("facing", "east".to_string());
+        properties.put_string("half", "top".to_string());
+        state.put_compound("properties", properties);
+        let list = NbtTag::List(vec![NbtTag::Compound(scalar), NbtTag::Compound(state)]);
+        let ids = extract_u16_array(&list).unwrap();
+        assert_eq!(ids[0], Block::STONE.default_state.id);
+        assert_eq!(
+            ids[1],
+            Block::OAK_STAIRS
+                .from_properties(&[("facing", "east"), ("half", "top")])
+                .to_state_id(&Block::OAK_STAIRS)
+        );
+    }
 
     #[test]
     fn extract_u16_array_from_vanilla_compound_palette() {

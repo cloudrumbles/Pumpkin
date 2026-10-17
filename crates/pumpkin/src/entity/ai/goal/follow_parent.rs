@@ -115,6 +115,6 @@ impl Goal for FollowParentGoal {
     }
 
     fn controls(&self) -> Controls {
-        Controls::empty()
+        Controls::MOVE
     }
 }

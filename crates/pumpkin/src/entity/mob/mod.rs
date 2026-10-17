@@ -67,6 +67,7 @@ pub mod silverfish;
 pub mod skeleton;
 pub mod slime;
 pub mod spider;
+pub mod sulfur_cube;
 pub mod vex;
 pub mod vindicator;
 pub mod warden;
@@ -1078,6 +1079,19 @@ pub trait Mob: EntityBase + Send + Sync {
 
     fn mob_write_nbt(&self, _nbt: &mut NbtCompound) {}
 
+    /// Species such as frogs lay eggs after breeding instead of spawning a baby.
+    fn create_breed_offspring(&self, world: &Arc<World>) -> Option<Arc<dyn EntityBase>> {
+        let entity = self.get_entity();
+        let baby = crate::entity::r#type::from_type(
+            entity.entity_type,
+            entity.pos.load(),
+            world,
+            uuid::Uuid::new_v4(),
+        );
+        baby.get_entity().set_age(-24000);
+        Some(baby)
+    }
+
     fn mob_read_nbt(&self, _nbt: &NbtCompound) {}
 
     /// Drops a target the mob is not allowed to attack, such as a creative player.
@@ -1338,7 +1352,7 @@ impl<T: Mob + Send + 'static> EntityBase for T {
 
         self.mob_tick(caller);
 
-        if !mob_entity.is_no_ai() {
+        if !mob_entity.is_no_ai() && mob_entity.living_entity.is_alive() {
             let age = mob_entity.living_entity.entity.age.load(Relaxed);
             let entity_id = mob_entity.living_entity.entity.entity_id;
 
@@ -1421,6 +1435,28 @@ impl<T: Mob + Send + 'static> EntityBase for T {
                     .unwrap_or_else(std::sync::PoisonError::into_inner);
                 move_control.tick(self);
             };
+        } else {
+            // Goal stop hooks release navigation and resources such as chest viewers.
+            for selector in [&mob_entity.goals_selector, &mob_entity.target_selector] {
+                let mut goals = std::mem::take(
+                    &mut *selector
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner),
+                );
+                goals.stop_all(self);
+                *selector
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner) = goals;
+            }
+            mob_entity
+                .navigator
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .stop();
+            mob_entity
+                .living_entity
+                .movement_input
+                .store(Vector3::new(0.0, 0.0, 0.0));
         }
 
         mob_entity.living_entity.tick(caller, server);
@@ -1492,7 +1528,7 @@ impl<T: Mob + Send + 'static> EntityBase for T {
             cause,
         );
         if damaged {
-            self.on_damage(damage_type, source);
+            self.on_damage(damage_type, cause.or(source));
         }
         damaged
     }

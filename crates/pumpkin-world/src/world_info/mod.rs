@@ -13,7 +13,7 @@ pub mod data_files;
 
 // Constraint: disk biome palette serialization changed in 1.21.5
 pub const MINIMUM_SUPPORTED_WORLD_DATA_VERSION: i32 = 4435; // 1.21.9
-pub const MAXIMUM_SUPPORTED_WORLD_DATA_VERSION: i32 = 4903; // 26.2
+pub const MAXIMUM_SUPPORTED_WORLD_DATA_VERSION: i32 = pumpkin_data::version::DATA_VERSION;
 
 pub const MINIMUM_SUPPORTED_LEVEL_VERSION: i32 = 19132; // 1.21.9
 pub const MAXIMUM_SUPPORTED_LEVEL_VERSION: i32 = 19133; // 1.21.9
@@ -781,8 +781,8 @@ mod tests {
         for name in preset_names {
             let preset = FlatLevelGeneratorPreset::from_name(name)
                 .unwrap_or_else(|| panic!("failed to load flat preset {name}"));
-            assert!(!preset.settings.biome.is_empty());
-            assert!(!preset.settings.layers.is_empty());
+            assert_ne!(preset.settings.biome, "");
+            assert_ne!(preset.settings.layers, [] as [super::FlatPresetLayer; 0]);
             assert_eq!(
                 preset.settings.layers.len(),
                 preset.settings.to_flat_layers().len()

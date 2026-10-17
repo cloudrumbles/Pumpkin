@@ -28,9 +28,6 @@ EXPECTED_VERSION_NAME = "26.3"
 BOT_NAME = "IronoreBot"
 BOT_UUID = uuid.UUID("8e7157f0-5878-4fb1-a728-a330dc58b64d")
 COMMAND_WAIT_SECONDS = 5.0
-EULA_SOURCE = Path(
-    "/home/shah/workspace/skirt-physics-lab/build/run/clientGameTest/eula.txt"
-)
 DEFAULT_VANILLA_JAR = Path(
     "/home/shah/.cache/ironore-java-reference/minecraft-server-26.3.jar"
 )
@@ -962,7 +959,7 @@ def _decode_palette_entry(value: NbtValue) -> StoredBlockState:
             "block-state palette entry is not a string or compound"
         )
 
-    # Pumpkin writes the established Name/Properties shape. Vanilla 26.3 uses
+    # Older Pumpkin saves use Name/Properties. Java 26.3 and current Pumpkin use
     # id/properties when any entry has properties, with an empty-name key for
     # property-free entries in that compound palette.
     raw_name = value.get("Name", value.get("id", value.get("")))
@@ -1151,11 +1148,11 @@ level = 6
     (run_dir / "pumpkin.toml").write_text(config, encoding="utf-8")
 
 
-def write_vanilla_config(run_dir: Path, port: int) -> None:
-    eula = EULA_SOURCE.read_text(encoding="utf-8")
+def write_vanilla_config(run_dir: Path, port: int, eula_source: Path) -> None:
+    eula = eula_source.read_text(encoding="utf-8")
     if not any(line.strip().lower() == "eula=true" for line in eula.splitlines()):
-        raise QualificationError(f"accepted EULA source is invalid: {EULA_SOURCE}")
-    shutil.copyfile(EULA_SOURCE, run_dir / "eula.txt")
+        raise QualificationError(f"accepted EULA source is invalid: {eula_source}")
+    shutil.copyfile(eula_source, run_dir / "eula.txt")
     flat = json.dumps(
         {
             "layers": [
@@ -1270,7 +1267,10 @@ def datapack_enable_command(
 
 def block_placement_succeeded(result: CommandResult, x: int, y: int, z: int) -> bool:
     marker = f"Changed the block at {x}, {y}, {z}"
-    return not result.looks_unsupported and marker in result.text
+    return not result.looks_unsupported and (
+        marker in result.text
+        or any(line.strip() == "Block placed" for line in result.lines)
+    )
 
 
 def close_position(
@@ -1312,6 +1312,7 @@ class Qualification:
         self.backend = cast(Literal["pumpkin", "vanilla"], args.backend)
         self.executable = cast(Path | None, args.executable)
         self.vanilla_jar = cast(Path, args.vanilla_jar)
+        self.eula_source = cast(Path | None, args.eula_source)
         self.run_dir = cast(Path, args.run_dir)
         self.deadline = Deadline(cast(float, args.timeout))
         self.results = Results()
@@ -1344,7 +1345,11 @@ class Qualification:
         else:
             if not self.vanilla_jar.is_file():
                 raise QualificationError(f"vanilla jar not found: {self.vanilla_jar}")
-            write_vanilla_config(self.run_dir, self.port)
+            if self.eula_source is None:
+                raise QualificationError(
+                    "--eula-source must name an already-accepted eula.txt"
+                )
+            write_vanilla_config(self.run_dir, self.port, self.eula_source)
 
         try:
             self._first_run()
@@ -2113,6 +2118,11 @@ def parser() -> argparse.ArgumentParser:
         help=f"official 26.3 server jar (default: {DEFAULT_VANILLA_JAR})",
     )
     result.add_argument(
+        "--eula-source",
+        type=Path,
+        help="already-accepted eula.txt to copy (required for vanilla)",
+    )
+    result.add_argument(
         "--run-dir", type=Path, required=True, help="new disposable directory"
     )
     result.add_argument(
@@ -2131,6 +2141,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.executable is not None:
         args.executable = cast(Path, args.executable).expanduser().resolve()
     args.vanilla_jar = cast(Path, args.vanilla_jar).expanduser().resolve()
+    if args.eula_source is not None:
+        args.eula_source = cast(Path, args.eula_source).expanduser().resolve()
     qualification: Qualification | None = None
     try:
         qualification = Qualification(args)

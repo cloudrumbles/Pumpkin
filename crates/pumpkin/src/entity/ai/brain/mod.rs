@@ -572,7 +572,7 @@ mod tests {
         brain.set_with_expiry(types::HUNTED_RECENTLY, true, 119);
         let dump = brain.debug_dump();
         assert_eq!(dump.activities, vec!["core", "idle"]);
-        assert!(dump.behaviors.is_empty());
+        assert_eq!(dump.behaviors, [] as [String; 0]);
         assert_eq!(dump.memories, vec!["hunted_recently: true (ttl: 119)"]);
         assert!(dump.to_string().starts_with("active: [core, idle]\n"));
     }

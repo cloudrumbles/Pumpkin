@@ -126,7 +126,7 @@ impl RawPoolElement {
         let processors = match processors {
             RawProcessorList::Named(name) => ProcessorListRef::Named(name),
             RawProcessorList::Inline { processors } => {
-                debug_assert!(processors.is_empty());
+                debug_assert_eq!(processors, [] as [serde_json::Value; 0]);
                 ProcessorListRef::Empty
             }
         };

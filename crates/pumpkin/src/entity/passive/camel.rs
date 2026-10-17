@@ -23,8 +23,6 @@ use crate::entity::{
     player::Player,
 };
 
-const TEMPT_ITEMS: &[&Item] = &[&Item::CACTUS];
-
 pub const FLAG_TAME: u8 = 2;
 pub const FLAG_SADDLE: u8 = 4;
 pub const FLAG_BRED: u8 = 8;
@@ -62,9 +60,16 @@ impl CamelEntity {
 
             goal_selector.add_goal(0, Box::new(SwimGoal::default()));
             goal_selector.add_goal(1, EscapeDangerGoal::new(2.0));
-            goal_selector.add_goal(2, BreedGoal::new(1.0));
-            goal_selector.add_goal(3, Box::new(TemptGoal::new(1.25, TEMPT_ITEMS, false)));
-            goal_selector.add_goal(4, Box::new(FollowParentGoal::new(1.0)));
+            if !mob_arc.is_husk() {
+                goal_selector.add_goal(2, BreedGoal::new(1.0));
+                goal_selector.add_goal(4, Box::new(FollowParentGoal::new(1.0)));
+            }
+            let food = if mob_arc.is_husk() {
+                &tag::Item::MINECRAFT_CAMEL_HUSK_FOOD
+            } else {
+                &tag::Item::MINECRAFT_CAMEL_FOOD
+            };
+            goal_selector.add_goal(3, Box::new(TemptGoal::with_tag(1.25, food, 2.5)));
             goal_selector.add_goal(6, Box::new(WanderAroundGoal::new(0.7)));
             goal_selector.add_goal(
                 7,
@@ -74,6 +79,10 @@ impl CamelEntity {
         };
 
         mob_arc
+    }
+
+    fn is_husk(&self) -> bool {
+        self.get_entity().entity_type.id == EntityType::CAMEL_HUSK.id
     }
 
     #[must_use]
@@ -121,18 +130,21 @@ impl AgeableMob for CamelEntity {
 
 impl Animal for CamelEntity {
     fn is_food(&self, item_stack: &ItemStack) -> bool {
-        item_stack.item.has_tag(&tag::Item::MINECRAFT_CAMEL_FOOD)
-            || item_stack.item == &Item::CACTUS
+        item_stack.item.has_tag(if self.is_husk() {
+            &tag::Item::MINECRAFT_CAMEL_HUSK_FOOD
+        } else {
+            &tag::Item::MINECRAFT_CAMEL_FOOD
+        })
     }
 }
 
 impl Mob for CamelEntity {
     fn as_ageable(&self) -> Option<&dyn AgeableMob> {
-        Some(self)
+        (!self.is_husk()).then_some(self)
     }
 
     fn as_animal(&self) -> Option<&dyn Animal> {
-        Some(self)
+        (!self.is_husk()).then_some(self)
     }
 
     fn mob_write_nbt(&self, nbt: &mut NbtCompound) {
@@ -142,6 +154,9 @@ impl Mob for CamelEntity {
 
     fn mob_read_nbt(&self, nbt: &NbtCompound) {
         self.read_ageable_nbt(nbt);
+        if self.is_husk() {
+            self.get_entity().age.store(0, Ordering::Relaxed);
+        }
         if let Some(saddle) = nbt.get_bool("Saddle") {
             self.set_saddled(saddle);
         }
@@ -152,7 +167,9 @@ impl Mob for CamelEntity {
     }
 
     fn mob_tick(&self, _caller: &dyn EntityBase) {
-        self.ageable_ai_step();
+        if !self.is_husk() {
+            self.ageable_ai_step();
+        }
     }
 
     fn mob_init_data_tracker(&self) {
@@ -170,6 +187,21 @@ impl Mob for CamelEntity {
 
     fn mob_interact(&self, player: &Arc<Player>, item_stack: &mut ItemStack) -> bool {
         let item = item_stack.get_item();
+        if self.is_husk() {
+            self.mob_entity
+                .persistence_required
+                .store(true, Ordering::Relaxed);
+            if self.is_food(item_stack) {
+                let living = &self.mob_entity.living_entity;
+                if living.health.load() < living.get_max_health() {
+                    living.heal(2.0);
+                    item_stack.decrement_unless_creative(player.gamemode.load(), 1);
+                    self.get_entity().play_sound(Sound::EntityCamelHuskEat);
+                    return true;
+                }
+                return false;
+            }
+        }
 
         if item == &Item::SADDLE && !self.is_saddled() && !self.is_baby() {
             self.set_saddled(true);
@@ -177,7 +209,11 @@ impl Mob for CamelEntity {
             let entity = self.get_entity();
             let world = entity.world.load();
             world.play_sound(
-                Sound::EntityCamelSaddle,
+                if self.is_husk() {
+                    Sound::EntityCamelHuskSaddle
+                } else {
+                    Sound::EntityCamelSaddle
+                },
                 SoundCategory::Neutral,
                 &entity.pos.load(),
             );
@@ -195,6 +231,6 @@ impl Mob for CamelEntity {
             }
         }
 
-        self.animal_interact(player, item_stack, Sound::EntityCamelAmbient)
+        !self.is_husk() && self.animal_interact(player, item_stack, Sound::EntityCamelAmbient)
     }
 }

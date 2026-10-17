@@ -11,6 +11,8 @@
     clippy::panic
 )]
 
+pub mod version;
+
 #[rustfmt::skip]
 #[path = "generated/chunk_view_lut.rs"]
 pub mod chunk_view_lut;

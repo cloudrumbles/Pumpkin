@@ -4776,6 +4776,10 @@ impl World {
             .iter()
             .find(|p| p.get_entity().entity_uuid == id)
             .cloned()
+            .or_else(|| {
+                self.get_player_by_uuid(id)
+                    .map(|player| player as Arc<dyn EntityBase>)
+            })
     }
 
     /// Gets a list of players whose location equals the given position in the world.
@@ -4871,6 +4875,11 @@ impl World {
     ) -> Option<Arc<dyn EntityBase>> {
         self.get_nearby_entities(pos, radius)
             .into_values()
+            .chain(
+                self.get_nearby_players(pos, radius)
+                    .into_iter()
+                    .map(|player| player as Arc<dyn EntityBase>),
+            )
             .filter(|entity| {
                 entity_types.is_none_or(|types| types.contains(&entity.get_entity().entity_type))
                     && predicate(entity)
@@ -5359,7 +5368,7 @@ impl World {
                 }
             }
 
-            if !flags.contains(BlockFlags::MOVED) {
+            if !flags.intersects(BlockFlags::MOVED | BlockFlags::SKIP_NEIGHBOR_SHAPE_UPDATE) {
                 let mut neighbour_update_flags = flags;
                 neighbour_update_flags.remove(BlockFlags::NOTIFY_NEIGHBORS);
                 neighbour_update_flags.remove(BlockFlags::SKIP_REDSTONE_WIRE_STATE_REPLACEMENT);
@@ -7150,12 +7159,48 @@ impl World {
     }
 
     pub fn emit_game_event(&self, event_key: impl Into<String>, position: Vector3<f64>) {
+        self.emit_game_event_with_source(event_key, position, None);
+    }
+
+    pub fn emit_game_event_with_source(
+        &self,
+        event_key: impl Into<String>,
+        position: Vector3<f64>,
+        source: Option<&Entity>,
+    ) {
         let mut event = crate::plugin::api::events::world::generic_game::GenericGameEvent::new(
             event_key.into(),
             position,
         );
         if let Some(server) = self.server.upgrade() {
             server.plugin_manager.fire_blocking(&server, &mut event);
+        }
+        if event.cancelled {
+            return;
+        }
+        let key = event.event_key.trim_start_matches("minecraft:");
+        for entity in self.entities.load().iter() {
+            if entity
+                .get_entity()
+                .pos
+                .load()
+                .squared_distance_to_vec(&event.position)
+                > 4096.0
+            {
+                continue;
+            }
+            if let Some(allay) = entity
+                .cast_any()
+                .downcast_ref::<crate::entity::passive::allay::AllayEntity>()
+            {
+                allay.hear_game_event(key, event.position);
+            }
+            if let Some(warden) = entity
+                .cast_any()
+                .downcast_ref::<crate::entity::mob::warden::WardenEntity>()
+            {
+                warden.hear_game_event(key, event.position, source);
+            }
         }
     }
 
@@ -7713,7 +7758,7 @@ pub(crate) mod tests {
         World, bedrock_block_breaking_rate, bedrock_chest_block_actor, merge_entity_records,
     };
 
-    pub(crate) struct TestWorld {
+    pub struct TestWorld {
         pub(crate) world: Arc<World>,
         pub(crate) level: Arc<Level>,
         _temp_dir: TempDir,
@@ -7896,7 +7941,7 @@ pub(crate) mod tests {
 
         merge_entity_records(&mut data, true, Vec::new());
 
-        assert!(data.is_empty());
+        assert_eq!(data, [] as [NbtCompound; 0]);
     }
 
     #[test]

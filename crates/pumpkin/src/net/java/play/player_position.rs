@@ -183,7 +183,6 @@ impl JavaClient {
         }}
     }
 
-    #[expect(clippy::too_many_lines)]
     pub fn handle_position_rotation(
         &self,
         player: &Arc<Player>,
@@ -196,7 +195,37 @@ impl JavaClient {
         // A movement packet was received this tick — tracked for SClientTickEnd zeroing.
         self.received_movement_this_tick
             .store(true, Ordering::Relaxed);
+        self.handle_player_position_change(player, server, packet);
+    }
+
+    #[expect(clippy::too_many_lines)]
+    pub(super) fn handle_player_position_change(
+        &self,
+        player: &Arc<Player>,
+        server: &Arc<Server>,
+        packet: &SPlayerPositionRotation,
+    ) {
+        // y = feet Y
+        let position = packet.position;
+        if position.x.is_nan()
+            || position.y.is_nan()
+            || position.z.is_nan()
+            || !packet.yaw.is_finite()
+            || !packet.pitch.is_finite()
+        {
+            self.try_kick(&TextComponent::translate_cross(
+                translation::java::MULTIPLAYER_DISCONNECT_INVALID_PLAYER_MOVEMENT,
+                translation::java::MULTIPLAYER_DISCONNECT_INVALID_PLAYER_MOVEMENT,
+                [],
+            ));
+            return;
+        }
+
         if player.get_entity().has_vehicle() {
+            player
+                .get_entity()
+                .set_rotation(wrap_degrees(packet.yaw), wrap_degrees(packet.pitch));
+            chunker::update_position(player);
             return;
         }
         // Ignore movement packets while awaiting a teleport confirmation (vanilla behavior)
@@ -214,22 +243,6 @@ impl JavaClient {
             self.force_tp(player, entity.pos.load());
             return;
         }
-        // y = feet Y
-        let position = packet.position;
-        if !position.x.is_finite()
-            || !position.y.is_finite()
-            || !position.z.is_finite()
-            || !packet.yaw.is_finite()
-            || !packet.pitch.is_finite()
-        {
-            self.try_kick(&TextComponent::translate_cross(
-                translation::java::MULTIPLAYER_DISCONNECT_INVALID_PLAYER_MOVEMENT,
-                translation::java::MULTIPLAYER_DISCONNECT_INVALID_PLAYER_MOVEMENT,
-                [],
-            ));
-            return;
-        }
-
         let position = Vector3::new(
             Self::clamp_horizontal(position.x),
             Self::clamp_vertical(position.y),
@@ -350,7 +363,7 @@ impl JavaClient {
     }
 
     pub fn force_tp(&self, player: &Arc<Player>, position: Vector3<f64>) {
-        let teleport_id = player.teleport_id_count.fetch_add(1, Ordering::Relaxed) + 1;
+        let teleport_id = player.next_teleport_id();
         *player
             .awaiting_teleport
             .lock()
