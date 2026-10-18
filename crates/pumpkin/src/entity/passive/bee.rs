@@ -1,6 +1,6 @@
 use std::sync::{
     Arc, Weak,
-    atomic::{AtomicI32, AtomicU8, Ordering},
+    atomic::{AtomicBool, AtomicI32, AtomicU8, Ordering},
 };
 
 use crate::block::entities::beehive::BeehiveBlockEntity;
@@ -49,6 +49,7 @@ pub struct BeeEntity {
     pub hive_position: AtomicCell<Option<BlockPos>>,
     pub flower_position: AtomicCell<Option<BlockPos>>,
     underwater_ticks: AtomicI32,
+    pub(crate) pollinating: AtomicBool,
 }
 
 impl BeeEntity {
@@ -69,6 +70,7 @@ impl BeeEntity {
             hive_position: AtomicCell::new(None),
             flower_position: AtomicCell::new(None),
             underwater_ticks: AtomicI32::new(0),
+            pollinating: AtomicBool::new(false),
         };
         let mob_arc = Arc::new(bee);
         let mob_weak: Weak<dyn Mob> = {
@@ -575,6 +577,7 @@ impl Goal for BeePollinateGoal {
         if let Some(b) = bee(mob) {
             b.flower_position.store(self.flower);
             b.ticks_without_nectar.store(0, Ordering::Relaxed);
+            b.pollinating.store(true, Ordering::Relaxed);
         }
     }
     fn should_continue(&mut self, mob: &dyn Mob) -> bool {
@@ -619,6 +622,7 @@ impl Goal for BeePollinateGoal {
     }
     fn stop(&mut self, mob: &dyn Mob) {
         if let Some(b) = bee(mob) {
+            b.pollinating.store(false, Ordering::Relaxed);
             if self.successful >= 400 {
                 b.set_has_nectar(true);
                 b.crops_grown_since_pollination.store(0, Ordering::Relaxed);

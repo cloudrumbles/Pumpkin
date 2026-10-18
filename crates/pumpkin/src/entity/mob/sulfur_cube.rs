@@ -574,14 +574,16 @@ impl Mob for SulfurCubeEntity {
             entity
                 .velocity
                 .store(entity.velocity.load() + Vector3::new(0.0, 0.04, 0.0));
-            living.movement_input.store(Vector3::new(0.0, 0.0, 1.2));
+            living.set_ai_speed(living.get_attribute_value(&Attributes::MOVEMENT_SPEED) * 1.2);
         } else if entity.on_ground.load(Ordering::Relaxed) {
             hop.jump_delay -= 1;
             let jump = hop.jump_delay <= 0;
             living.jumping.store(jump, Ordering::Relaxed);
-            living
-                .movement_input
-                .store(Vector3::new(0.0, 0.0, if jump { 1.0 } else { 0.0 }));
+            living.set_ai_speed(if jump {
+                living.get_attribute_value(&Attributes::MOVEMENT_SPEED)
+            } else {
+                0.0
+            });
             if jump {
                 hop.jump_delay = rand::random_range(10..30) / if target.is_some() { 3 } else { 1 };
                 entity.play_sound(if self.is_baby() {
@@ -592,7 +594,7 @@ impl Mob for SulfurCubeEntity {
             }
         } else {
             living.jumping.store(false, Ordering::Relaxed);
-            living.movement_input.store(Vector3::new(0.0, 0.0, 1.0));
+            living.set_ai_speed(living.get_attribute_value(&Attributes::MOVEMENT_SPEED));
         }
     }
     fn post_tick(&self) {

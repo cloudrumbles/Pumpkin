@@ -3,7 +3,6 @@ use crate::entity::ai::brain::Brain;
 use crate::entity::ai::brain::memory::PackedMemories;
 use crate::entity::ai::control::MoveControlTrait;
 use crate::entity::ai::control::look_control::LookControl;
-use crate::entity::ai::control::move_control::MoveControl;
 use crate::entity::ai::goal::goal_selector::GoalSelector;
 use crate::entity::ai::neutral::{self, AngryPlayerGoal, PersistentAnger, ResetUniversalAngerGoal};
 use crate::entity::ai::sensing::Sensing;
@@ -198,9 +197,11 @@ impl MobEntity {
             target_selector: std::sync::Mutex::new(targets),
             navigator: std::sync::Mutex::new(Navigator::default()),
             target: std::sync::Mutex::new(None),
-            look_control: std::sync::Mutex::new(LookControl::default()),
+            look_control: std::sync::Mutex::new(LookControl::for_entity(kind)),
             sensing: std::sync::Mutex::new(Sensing::default()),
-            move_control: std::sync::Mutex::new(Box::new(MoveControl::default())),
+            move_control: std::sync::Mutex::new(crate::entity::ai::control::movement_controller(
+                kind,
+            )),
             brain: std::sync::Mutex::new(Brain::default()),
             anger: PersistentAnger::default(),
             position_target: AtomicCell::new(BlockPos::ZERO),
@@ -802,6 +803,73 @@ impl MobEntity {
 }
 
 pub trait Mob: EntityBase + Send + Sync {
+    fn get_mob_jump_multiplier(&self) -> f64 {
+        1.0
+    }
+    fn on_jump(&self) {}
+
+    fn water_travel_parameters(&self) -> Option<(f64, f64, f64)> {
+        let kind = self.get_entity().entity_type;
+        let living = &self.get_mob_entity().living_entity;
+        if [
+            &EntityType::AXOLOTL,
+            &EntityType::FROG,
+            &EntityType::NAUTILUS,
+            &EntityType::ZOMBIE_NAUTILUS,
+        ]
+        .contains(&kind)
+        {
+            Some((living.ai_speed.load(), 0.9, 0.0))
+        } else if kind == &EntityType::DOLPHIN {
+            Some((
+                living.ai_speed.load(),
+                0.9,
+                if self.get_mob_entity().get_target().is_none() {
+                    -0.005
+                } else {
+                    0.0
+                },
+            ))
+        } else if [&EntityType::GUARDIAN, &EntityType::ELDER_GUARDIAN].contains(&kind) {
+            Some((
+                0.1,
+                0.9,
+                if self.is_navigator_idle() && self.get_mob_entity().get_target().is_none() {
+                    -0.005
+                } else {
+                    0.0
+                },
+            ))
+        } else {
+            None
+        }
+    }
+
+    fn flying_travel_speeds(&self) -> Option<(f64, f64, f64)> {
+        let kind = self.get_entity().entity_type;
+        if kind == &EntityType::ALLAY {
+            Some((
+                0.02,
+                0.02,
+                self.get_mob_entity().living_entity.ai_speed.load(),
+            ))
+        } else if kind == &EntityType::HAPPY_GHAST {
+            let speed = self
+                .get_mob_entity()
+                .living_entity
+                .get_attribute_value(&Attributes::FLYING_SPEED)
+                * 5.0
+                / 3.0;
+            Some((speed, speed, speed))
+        } else if kind == &EntityType::GHAST {
+            Some((0.02, 0.02, 0.02))
+        } else if kind == &EntityType::PHANTOM {
+            Some((0.02, 0.02, 0.2))
+        } else {
+            None
+        }
+    }
+
     fn as_neutral(&self) -> Option<&PersistentAnger> {
         neutral::is_neutral(self.get_entity().entity_type).then_some(&self.get_mob_entity().anger)
     }
@@ -1412,6 +1480,9 @@ impl<T: Mob + Send + 'static> EntityBase for T {
         self.mob_tick(caller);
 
         if !mob_entity.is_no_ai() && mob_entity.living_entity.is_alive() {
+            if self.get_entity().entity_type != &EntityType::RABBIT {
+                mob_entity.living_entity.jumping.store(false, Relaxed);
+            }
             let age = mob_entity.living_entity.entity.tick_count.load(Relaxed);
             let entity_id = mob_entity.living_entity.entity.entity_id;
 
@@ -1467,7 +1538,7 @@ impl<T: Mob + Send + 'static> EntityBase for T {
                 std::mem::take(&mut *guard)
             };
 
-            navigator.tick(&mob_entity.living_entity);
+            navigator.tick(self);
 
             {
                 *mob_entity
@@ -1478,22 +1549,21 @@ impl<T: Mob + Send + 'static> EntityBase for T {
 
             self.custom_server_ai_step(caller);
 
-            // Controllers are synchronous, so we can just use normal blocks
+            // Java ticks MoveControl before LookControl and JumpControl.
             {
-                let mut look_control = mob_entity
-                    .look_control
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner);
-                look_control.tick(self);
-            };
-
-            {
-                let mut move_control = mob_entity
+                let mut controller = mob_entity
                     .move_control
                     .lock()
                     .unwrap_or_else(std::sync::PoisonError::into_inner);
-                move_control.tick(self);
-            };
+                controller.tick(self);
+            }
+            {
+                let mut controller = mob_entity
+                    .look_control
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                controller.tick(self);
+            }
         } else {
             // Goal stop hooks release navigation and resources such as chest viewers.
             for selector in [&mob_entity.goals_selector, &mob_entity.target_selector] {
@@ -1519,6 +1589,7 @@ impl<T: Mob + Send + 'static> EntityBase for T {
         }
 
         if mob_entity.is_no_ai() {
+            mob_entity.living_entity.set_ai_speed(0.0);
             mob_entity.living_entity.jumping.store(false, Relaxed);
         }
         mob_entity.living_entity.tick(caller, server);

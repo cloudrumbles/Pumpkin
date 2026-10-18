@@ -23,10 +23,14 @@ use pumpkin_data::{
 };
 use pumpkin_nbt::compound::NbtCompound;
 use pumpkin_util::math::vector3::Vector3;
-use std::sync::{Arc, atomic::Ordering};
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
+};
 
 pub struct DrownedEntity {
     entity: Arc<ZombieEntityBase>,
+    pub searching_for_land: AtomicBool,
 }
 
 fn is_day(world: &World) -> bool {
@@ -51,6 +55,14 @@ fn has_trident(mob: &dyn Mob) -> bool {
 }
 
 impl DrownedEntity {
+    pub fn wants_to_swim(&self) -> bool {
+        self.searching_for_land.load(Ordering::Relaxed)
+            || self
+                .get_mob_entity()
+                .get_target()
+                .is_some_and(|target| target.get_entity().is_in_water())
+    }
+
     pub fn new(entity: Entity) -> Arc<Self> {
         Self::with_can_break_doors(entity, false)
     }
@@ -58,6 +70,7 @@ impl DrownedEntity {
     pub fn with_can_break_doors(entity: Entity, _can_break_doors: bool) -> Arc<Self> {
         let drowned = Arc::new(Self {
             entity: ZombieEntityBase::new(entity),
+            searching_for_land: AtomicBool::new(false),
         });
         let mob = &drowned.entity.mob_entity;
         *mob.navigator
@@ -123,16 +136,13 @@ impl Mob for DrownedEntity {
     fn get_mob_entity(&self) -> &MobEntity {
         &self.entity.mob_entity
     }
-    fn get_mob_gravity(&self) -> f64 {
-        if self.get_entity().touching_water.load(Ordering::Relaxed)
-            && (valid_target(self) || !is_day(&self.get_entity().world.load()))
-        {
-            0.0
-        } else {
-            self.get_mob_entity().living_entity.get_gravity()
-        }
+    fn water_travel_parameters(&self) -> Option<(f64, f64, f64)> {
+        (self.get_entity().is_submerged_in_water() && self.wants_to_swim())
+            .then_some((0.01, 0.9, 0.0))
     }
     fn custom_server_ai_step(&self, _caller: &dyn EntityBase) {
+        self.get_entity()
+            .set_swimming(self.get_entity().is_submerged_in_water() && self.wants_to_swim());
         if self.get_mob_entity().get_target().is_some() && !valid_target(self) {
             self.get_mob_entity().set_target(None);
         }
@@ -345,6 +355,11 @@ impl Goal for DrownedHabitatGoal {
     }
     fn start(&mut self, mob: &dyn Mob) {
         self.remaining = 160;
+        if let Some(drowned) = mob.cast_any().downcast_ref::<DrownedEntity>() {
+            drowned
+                .searching_for_land
+                .store(!self.day, Ordering::Relaxed);
+        }
         if let Some(destination) = self.destination {
             mob.get_mob_entity()
                 .navigator
@@ -367,6 +382,9 @@ impl Goal for DrownedHabitatGoal {
     }
     fn stop(&mut self, mob: &dyn Mob) {
         self.destination = None;
+        if let Some(drowned) = mob.cast_any().downcast_ref::<DrownedEntity>() {
+            drowned.searching_for_land.store(false, Ordering::Relaxed);
+        }
         mob.get_mob_entity()
             .navigator
             .lock()

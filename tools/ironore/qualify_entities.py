@@ -188,9 +188,19 @@ class EntityQualification:
                 raise QualificationError("command rejected: " + text + ": " + result)
             return result
 
+    def game_time(self) -> int:
+        result = self.command("time query gametime")
+        match = re.search(r"game\s*time is\s+(\d+)", result, re.IGNORECASE)
+        if match is None:
+            raise QualificationError("game-time query was not understood: " + result)
+        return int(match[1])
+
     def wait(self, seconds: float) -> None:
+        """Observe simulated ticks even when host load slows the server."""
         assert self.bot is not None
-        self.bot.assert_connected_for(seconds)
+        end = self.game_time() + math.ceil(seconds * 20)
+        while self.game_time() < end:
+            self.bot.assert_connected_for(0.1)
 
     def nbt(self, tag: str) -> str:
         return self.command(f"data get entity @e[tag={tag},limit=1]")
@@ -219,6 +229,8 @@ class EntityQualification:
             raise QualificationError(detail)
 
     def case(self, name: str, probe: Callable[[], None]) -> None:
+        if self.args.case and name not in self.args.case:
+            return
         try:
             self.cleanup()
             probe()
@@ -327,9 +339,9 @@ class EntityQualification:
         self.command("fill 33 198 18 46 198 30 stone")
         self.command("fill 33 199 18 46 199 30 sand")
         self.summon("turtle", "expecting", 38.5, 200, 24.5, 'has_egg:1b,home_pos:[I;38,200,24]')
-        end = time.monotonic() + 23.0
+        end = self.game_time() + 460
         last = ""
-        while time.monotonic() < end:
+        while self.game_time() < end:
             self.wait(1.0)
             last = self.nbt("expecting")
             if parse_nbt_bool(last, "has_egg") is False:
@@ -344,8 +356,8 @@ class EntityQualification:
         self.wait(1.5)
         bee = self.command("data get entity @e[type=minecraft:bee,limit=1]")
         self.require("Health" in bee and parse_nbt_bool(bee, "HasNectar") is False, "hive did not release delivered bee: " + bee)
-        results = [self.command(f"execute if block 36 200 36 beehive[honey_level={level}] run say IRONORE_HONEY_{level}") for level in (1, 2)]
-        self.require(any("IRONORE_HONEY_" in result for result in results),
+        results = [self.command(f"execute in minecraft:overworld if block 36 200 36 beehive[honey_level={level}] run data get block 36 200 36") for level in (1, 2)]
+        self.require(any("bees:" in result for result in results),
                      "honey did not increase: " + repr(results))
 
     def axolotl_dry_out(self) -> None:
@@ -356,11 +368,66 @@ class EntityQualification:
 
     def frog_tongue(self) -> None:
         self.command("fill 33 199 18 46 199 30 grass_block")
+        self.command("fill 33 200 18 46 200 30 air")
         self.summon("frog", "hunter", 38.5, 200, 24.5)
         self.summon("slime", "prey", 40, 200, 24.5, "Size:0,NoAI:1b")
-        self.wait(7.0)
+        end = self.game_time() + 400
         result = self.nbt("prey")
+        while self.game_time() < end and "Health" in result and self.number(result, "Health") > 0:
+            self.wait(1.0)
+            result = self.nbt("prey")
         self.require("Health" not in result or self.number(result, "Health") <= 0, "frog did not consume small slime: " + result)
+
+    def ground_navigation(self) -> None:
+        self.command("gamemode creative AIBot")
+        self.command("tp AIBot 44.5 202 44.5")
+        self.command("time set 18000")
+        self.command("fill 33 199 18 46 199 30 stone")
+        self.command("fill 33 200 18 46 205 30 air")
+        # Three blocks high: pursuit requires finding a route around an end.
+        self.command("fill 39 200 21 39 202 27 stone")
+        self.summon("villager", "walk_target", 43.5, 200, 24.5, "NoAI:1b")
+        self.summon("zombie", "walker", 35.5, 200, 24.5, "IsBaby:0b")
+        # Retaliation establishes the target even before there is line of sight.
+        self.command("damage @e[tag=walker,limit=1] 1 minecraft:mob_attack by @e[tag=walk_target,limit=1]")
+        end = self.game_time() + 600
+        furthest = 0.0
+        prey = self.nbt("walk_target")
+        while self.game_time() < end and "Health" in prey and self.number(prey, "Health") >= 20:
+            self.wait(0.5)
+            position = parse_position(self.nbt("walker"))
+            self.require(position is not None, "pursuing zombie disappeared")
+            assert position is not None
+            furthest = max(furthest, math.dist((35.5, 200, 24.5), position))
+            prey = self.nbt("walk_target")
+        self.require(furthest > 5 and ("Health" not in prey or self.number(prey, "Health") < 20),
+                     f"zombie did not route around the wall and hit the villager; displacement={furthest}: {prey}")
+
+    def ambient_movement(self, kind: str, water: bool) -> None:
+        self.command("gamemode creative AIBot")
+        self.command("tp AIBot 44.5 202 44.5")
+        self.command("time set 6000")
+        self.command("fill 17 199 17 31 209 31 glass hollow")
+        self.command("fill 18 200 18 30 208 30 " + ("water" if water else "air"))
+        self.summon(kind, "moving", 24.5, 203, 24.5)
+        self.wait(1.0)
+        origin = parse_position(self.nbt("moving"))
+        self.require(origin is not None, "moving entity was not created")
+        assert origin is not None
+        furthest = 0.0
+        vertical = 0.0
+        end = self.game_time() + 400
+        while self.game_time() < end and (furthest < 1.5 or vertical < 0.25):
+            self.wait(0.5)
+            observed = self.nbt("moving")
+            position = parse_position(observed)
+            self.require(position is not None and self.number(observed, "Health") > 0,
+                         "moving entity died or disappeared: " + observed)
+            assert position is not None
+            furthest = max(furthest, math.dist(origin, position))
+            vertical = max(vertical, abs(origin[1] - position[1]))
+        self.require(furthest >= 1.5 and vertical >= 0.25,
+                     f"{kind} failed to move through its habitat: displacement={furthest}, vertical={vertical}")
 
     def run(self) -> int:
         if self.run_dir.exists():
@@ -383,12 +450,16 @@ class EntityQualification:
             self.server.wait_for_text("AIBot joined the game", "AI bot join")
             self.command("difficulty normal")
             self.command("gamerule spawn_mobs false")
+            self.command("weather clear")
+            self.command("gamerule advance_weather false")
             self.command("gamemode creative AIBot")
             self.command("forceload add 16 16 47 47")
             self.command("tp AIBot 40.5 202 40.5")
             self.wait(1.5)
             self.command("fill 20 199 20 29 199 29 stone")
             self.command("fill 20 200 20 29 210 29 air")
+            self.command("fill 33 199 33 46 199 46 stone")
+            self.command("fill 33 200 33 46 205 46 air")
             if self.args.suite in ("all", "no-ai"):
                 registry = json.loads((self.repo / "assets" / "entities.json").read_text())
                 for name, value in registry.items():
@@ -408,6 +479,9 @@ class EntityQualification:
                 self.case("frog_consumes_small_slime", self.frog_tongue)
                 for name in ("bee", "enderman", "iron_golem", "polar_bear", "wolf", "zombified_piglin"):
                     self.case("neutral_anger_expires_" + name, lambda name=name: self.neutral_anger_expiry(name))
+                self.case("ground_zombie_routes_around_wall", self.ground_navigation)
+                self.case("water_cod_random_swim", lambda: self.ambient_movement("cod", True))
+                self.case("flying_allay_wander", lambda: self.ambient_movement("allay", False))
         except (OSError, ValueError, QualificationError) as error:
             self.observations.append(Observation("harness_prerequisite", False, str(error)))
         finally:
@@ -422,6 +496,7 @@ class EntityQualification:
             "target_version": "26.3",
             "expected_data_version": 5023,
             "executable_sha256": hashlib.file_digest(self.args.executable.open("rb"), "sha256").hexdigest() if self.args.executable else None,
+            "vanilla_jar_sha1": hashlib.file_digest(self.args.vanilla_jar.open("rb"), "sha1").hexdigest() if self.args.vanilla_jar else None,
             "observations": [asdict(o) for o in self.observations],
             "commands": self.commands,
         }
@@ -439,6 +514,7 @@ def main() -> int:
     parser.add_argument("--eula-source", type=Path)
     parser.add_argument("--run-dir", type=Path, required=True)
     parser.add_argument("--suite", choices=("all", "no-ai", "behavior"), default="all")
+    parser.add_argument("--case", action="append", help="Run only the named case (repeatable)")
     parser.add_argument("--timeout", type=float, default=900)
     args = parser.parse_args()
     if args.backend == "pumpkin" and args.executable is None:

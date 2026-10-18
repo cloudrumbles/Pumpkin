@@ -4,11 +4,12 @@ This fork maintains the Pumpkin backend used by Ironore singleplayer.
 
 - Fork: https://github.com/cloudrumbles/Pumpkin
 - Maintained branch: `main`
+- Entity AI work branch: `ironore/vanilla-parity-20261017` (not merged)
 - Upstream: https://github.com/Pumpkin-MC/Pumpkin
 - Upstream base: `204a94ed895f041a845630d5a23c094705a0704e`
 - Base release: `0.2.0+26.3-26.51`
 - Java protocol: 777 (Minecraft 26.3)
-- Pumpkin world DataVersion: 4903
+- Pumpkin world DataVersion: 5023
 
 Ironore records the exact supported fork commit in
 `tools/pumpkin-backend.json`. Locally built artifacts carry their own executable
@@ -62,6 +63,43 @@ The official server JAR used as a reference has SHA-256
 `d052f14d7a173734fba553711e5b570162e2f2a313267ee31a21b975a679be64`.
 Keep Java source, game assets, test saves and executable artifacts outside git.
 Use disposable worlds for save/reopen and protocol tests.
+
+## Entity AI continuation (2026-10-18)
+
+The entity port targets the stable Java 26.3 server: protocol 777 and DataVersion
+5023. Its official server JAR has SHA-1
+`33680f5f2ac32864d6d7cf5e56a705fdb3e05f4c`. The version constant is shared by world,
+chunk, POI, player and structure persistence.
+
+The current work includes neutral-mob anger and melee callbacks, aquatic and
+flying behavior, and entity-specific movement controllers. Navigation now uses
+each mob's collision dimensions, forwards wanted positions to its controller,
+and activates paths supplied by melee goals. The path search excludes visited
+nodes so it cannot repeatedly rebuild cyclic predecessor chains.
+
+`tools/ironore/entity-parity-26.3.json` records the Java class hierarchy and
+declared goals for all 90 mob types, alongside the 71 other registered entity
+types. It is a requirements inventory, not a parity score. Brain activities,
+species-specific states, interactions, lifecycle behavior, persistence and
+exceptional conditions still require implementation and qualification.
+
+`tools/ironore/qualify_entities.py` starts a real server in a disposable world,
+connects a protocol-777 client, advances by observed game ticks, checks entity NBT
+and metadata, and records a clean shutdown. Positive movement checks cover a
+provoked zombie routing around a wall, cod swimming and allay flight. NoAI
+stationary checks are separate requirements; they do not establish active AI
+parity. Compact run records are kept in `tools/ironore/reports/`; full command
+transcripts and test worlds remain with the qualification runs outside git.
+
+The movement executable SHA-256
+`64b253140d6a7b02f886f2254573bf80c93d8d0c31c0ae98e51719d6edb09b7a`
+passed 114/114 live checks on October 18: 90 NoAI checks, 23 active behavior
+checks and clean shutdown. The official Java reference passed the original
+111-check suite and the separate three-probe movement suite with clean shutdown.
+These results qualify the listed scenarios, not every behavior of each entity.
+
+This branch does not yet establish 100% entity AI parity and does not change
+Ironore's supported backend pin.
 
 ## Paused qualification checkpoint (2026-10-15)
 

@@ -462,7 +462,9 @@ impl MoveControlTrait for SlimeMoveControl {
             }
             living_entity.jumping.store(false, Ordering::SeqCst);
         }
-        living_entity.movement_input.store(movement_input);
+        living_entity.set_ai_speed(
+            movement_input.z * living_entity.get_attribute_value(&Attributes::MOVEMENT_SPEED),
+        );
     }
 }
 

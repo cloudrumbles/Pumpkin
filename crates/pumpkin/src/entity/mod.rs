@@ -1280,7 +1280,7 @@ impl Entity {
     }
 
     pub fn get_eye_height(&self) -> f64 {
-        f64::from(Self::get_entity_dimensions(self.pose.load()).eye_height)
+        f64::from(self.entity_dimension.load().eye_height)
     }
 
     /// Updates the entity's position, block position, and chunk position.

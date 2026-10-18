@@ -22,16 +22,7 @@ pub fn configure_swimming(mob: &MobEntity) {
 }
 
 pub fn aquatic_gravity(mob: &MobEntity) -> f64 {
-    if mob
-        .living_entity
-        .entity
-        .touching_water
-        .load(Ordering::Relaxed)
-    {
-        0.0
-    } else {
-        mob.living_entity.get_gravity()
-    }
+    mob.living_entity.get_gravity()
 }
 
 /// Picks submerged destinations and follows a bounded school when requested.

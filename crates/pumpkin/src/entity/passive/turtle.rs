@@ -38,6 +38,7 @@ pub struct TurtleEntity {
     pub has_egg: AtomicBool,
     pub laying_egg: AtomicBool,
     pub home_pos: AtomicCell<BlockPos>,
+    pub going_home: AtomicBool,
 }
 
 impl TurtleEntity {
@@ -54,6 +55,7 @@ impl TurtleEntity {
             has_egg: AtomicBool::new(false),
             laying_egg: AtomicBool::new(false),
             home_pos: AtomicCell::new(home),
+            going_home: AtomicBool::new(false),
         };
         let mob_arc = Arc::new(turtle);
         let mob_weak: Weak<dyn Mob> = {
@@ -121,6 +123,25 @@ impl Animal for TurtleEntity {
 }
 
 impl Mob for TurtleEntity {
+    fn water_travel_parameters(&self) -> Option<(f64, f64, f64)> {
+        let near_home = self.going_home.load(Ordering::Relaxed)
+            && self
+                .home_pos
+                .load()
+                .to_centered_f64()
+                .squared_distance_to_vec(&self.get_entity().pos.load())
+                < 400.0;
+        Some((
+            0.1,
+            0.9,
+            if self.mob_entity.get_target().is_none() && !near_home {
+                -0.005
+            } else {
+                0.0
+            },
+        ))
+    }
+
     fn get_mob_gravity(&self) -> f64 {
         crate::entity::ai::goal::aquatic::aquatic_gravity(&self.mob_entity)
     }
@@ -432,8 +453,11 @@ impl Goal for TurtleJourneyGoal {
         }
         false
     }
-    fn start(&mut self, _mob: &dyn Mob) {
+    fn start(&mut self, mob: &dyn Mob) {
         self.ticks = 0;
+        if let Some(turtle) = turtle(mob) {
+            turtle.going_home.store(self.home, Ordering::Relaxed);
+        }
     }
     fn should_continue(&mut self, mob: &dyn Mob) -> bool {
         self.ticks < 1200
@@ -468,6 +492,9 @@ impl Goal for TurtleJourneyGoal {
     }
     fn stop(&mut self, mob: &dyn Mob) {
         self.destination = None;
+        if let Some(turtle) = turtle(mob) {
+            turtle.going_home.store(false, Ordering::Relaxed);
+        }
         mob.get_mob_entity()
             .navigator
             .lock()

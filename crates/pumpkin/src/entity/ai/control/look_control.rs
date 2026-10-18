@@ -1,22 +1,52 @@
+use super::smooth_swimming_look_control::SmoothSwimmingLookControl;
 use crate::entity::EntityBase;
 use crate::entity::ai::control::Control;
 use crate::entity::mob::{Mob, MobEntity};
+use crate::entity::passive::{axolotl::AxolotlEntity, bee::BeeEntity, frog::FrogEntity};
+use pumpkin_data::entity::EntityType;
 use pumpkin_util::math::clamp_angle;
 use pumpkin_util::math::vector3::Vector3;
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 
 // Please keep the atomic values out of here!!!
 #[derive(Default)]
 pub struct LookControl {
-    max_yaw_change: f32,
-    max_pitch_change: f32,
-    look_at_timer: i32,
-    position: Vector3<f64>,
+    pub(super) max_yaw_change: f32,
+    pub(super) max_pitch_change: f32,
+    pub(super) look_at_timer: i32,
+    pub(super) position: Vector3<f64>,
+    swimming: Option<SmoothSwimmingLookControl>,
 }
 
 impl Control for LookControl {}
 
 impl LookControl {
+    pub fn for_entity(kind: &EntityType) -> Self {
+        let swimming = if kind == &EntityType::AXOLOTL {
+            Some(SmoothSwimmingLookControl::new(20))
+        } else if [
+            &EntityType::DOLPHIN,
+            &EntityType::NAUTILUS,
+            &EntityType::ZOMBIE_NAUTILUS,
+            &EntityType::TADPOLE,
+        ]
+        .contains(&kind)
+        {
+            Some(SmoothSwimmingLookControl::new(10))
+        } else {
+            None
+        };
+        Self {
+            swimming,
+            ..Self::default()
+        }
+    }
+
+    pub fn wanted_position(&self) -> Option<Vector3<f64>> {
+        (self.look_at_timer > 0).then_some(self.position)
+    }
+
     pub fn look_at_position(&mut self, mob: &dyn Mob, position: Vector3<f64>) {
         self.look_at(mob, position.x, position.y, position.z);
     }
@@ -69,8 +99,31 @@ impl LookControl {
     }
 
     pub fn tick(&mut self, mob: &dyn Mob) {
+        if mob
+            .cast_any()
+            .downcast_ref::<AxolotlEntity>()
+            .is_some_and(AxolotlEntity::is_playing_dead)
+            || mob
+                .cast_any()
+                .downcast_ref::<BeeEntity>()
+                .is_some_and(|bee| bee.mob_entity.anger.is_angry(bee))
+        {
+            return;
+        }
+        if let Some(swimming) = self.swimming {
+            swimming.tick(self, mob);
+            return;
+        }
         let entity = mob.get_entity();
-        if Self::should_stay_horizontal() {
+        let keep_pitch = mob
+            .cast_any()
+            .downcast_ref::<BeeEntity>()
+            .is_some_and(|bee| bee.pollinating.load(Ordering::Relaxed))
+            || mob
+                .cast_any()
+                .downcast_ref::<FrogEntity>()
+                .is_some_and(|frog| frog.tongue_target_id.load(Ordering::Relaxed) != -1);
+        if !keep_pitch {
             entity.set_pitch(0.0);
         }
 
@@ -101,10 +154,6 @@ impl LookControl {
         Self::clamp_head_yaw(mob);
     }
 
-    const fn should_stay_horizontal() -> bool {
-        true
-    }
-
     fn clamp_head_yaw(mob: &dyn Mob) {
         let mob_entity = mob.get_mob_entity();
         if let Ok(navigator) = mob_entity.navigator.try_lock()
@@ -120,7 +169,7 @@ impl LookControl {
         }
     }
 
-    fn get_target_pitch(&self, mob: &MobEntity) -> Option<f32> {
+    pub(super) fn get_target_pitch(&self, mob: &MobEntity) -> Option<f32> {
         let position = self.position;
         let mob_position = mob.living_entity.entity.pos.load();
         let d = position.x - mob_position.x;
@@ -134,7 +183,7 @@ impl LookControl {
         }
     }
 
-    fn get_target_yaw(&self, mob: &MobEntity) -> Option<f32> {
+    pub(super) fn get_target_yaw(&self, mob: &MobEntity) -> Option<f32> {
         let position = self.position;
         let mob_position = mob.living_entity.entity.pos.load();
         let d = position.x - mob_position.x;

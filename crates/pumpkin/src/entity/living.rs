@@ -26,7 +26,6 @@ use super::experience_orb::ExperienceOrbEntity;
 use super::{Entity, EntityBase, NBTStorageInit};
 use crate::block::OnLandedUponArgs;
 use crate::entity::NBTStorage;
-use crate::entity::ageable::AgeableMob;
 use crate::entity::attributes::AttributeInstance;
 use crate::entity::attributes::Modifier;
 use crate::entity::attributes::ModifierOperation;
@@ -97,6 +96,8 @@ pub struct LivingEntity {
     pub entity_equipment: Arc<std::sync::Mutex<EntityEquipment>>,
     pub equipment_drop_chances: Arc<std::sync::Mutex<FxHashMap<EquipmentSlot, f32>>>,
     pub movement_input: AtomicCell<Vector3<f64>>,
+    /// Speed chosen by AI controls, separate from the movement attribute.
+    pub ai_speed: AtomicCell<f64>,
     /// Long jumps retain horizontal momentum and apply gravity without air drag.
     pub discard_friction: AtomicBool,
     pub equipment_slots: Arc<FxHashMap<usize, EquipmentSlot>>,
@@ -239,10 +240,7 @@ impl LivingEntity {
     }
 
     pub fn get_pitch(&self) -> f32 {
-        let is_baby = self
-            .get_mob()
-            .and_then(|x| x.as_ageable())
-            .is_some_and(AgeableMob::is_baby);
+        let is_baby = self.entity.age.load(Relaxed) < 0;
 
         let mut rng = rand::rng();
         if is_baby {
@@ -308,6 +306,7 @@ impl LivingEntity {
             last_hurt_by_mob_id: AtomicI32::new(0),
             last_hurt_by_mob_time: AtomicI64::new(0),
             movement_input: AtomicCell::new(Vector3::default()),
+            ai_speed: AtomicCell::new(0.0),
             water_movement_speed_multiplier,
             last_block_pos: AtomicCell::new(None),
             equipment_attribute_modifier_ids: std::sync::Mutex::new(FxHashMap::default()),
@@ -1350,6 +1349,22 @@ impl LivingEntity {
         world.broadcast_editioned(&je_packet, &be_packet);
     }
 
+    pub fn set_ai_speed(&self, speed: f64) {
+        let speed = f64::from(speed as f32);
+        self.ai_speed.store(speed);
+        let mut input = self.movement_input.load();
+        input.z = speed;
+        self.movement_input.store(input);
+    }
+
+    fn movement_speed(&self, caller: &dyn EntityBase) -> f64 {
+        if caller.get_mob().is_some() {
+            self.ai_speed.load()
+        } else {
+            self.get_attribute_value(&Attributes::MOVEMENT_SPEED)
+        }
+    }
+
     fn tick_movement(&self, caller: &dyn EntityBase) {
         if self.jumping_cooldown.load(Relaxed) != 0 {
             self.jumping_cooldown.fetch_sub(1, Relaxed);
@@ -1358,16 +1373,6 @@ impl LivingEntity {
         let should_swim_in_fluids = caller.get_player().is_none_or(|player| !player.is_flying());
 
         self.entity.check_zero_velo();
-
-        let mut movement_input = self.movement_input.load();
-
-        movement_input.x *= 0.98;
-
-        movement_input.z *= 0.98;
-
-        self.movement_input.store(movement_input);
-
-        // TODO: Tick AI
 
         if self.jumping.load(SeqCst) && should_swim_in_fluids {
             let in_lava = self.entity.touching_lava.load(SeqCst);
@@ -1395,7 +1400,7 @@ impl LivingEntity {
             } else if (on_ground || in_water && fluid_height <= swim_height)
                 && self.jumping_cooldown.load(SeqCst) == 0
             {
-                self.jump();
+                self.jump(caller);
 
                 self.jumping_cooldown.store(10, SeqCst);
             }
@@ -1430,6 +1435,11 @@ impl LivingEntity {
                 self.travel_in_air(caller);
             }
         }
+
+        let mut movement_input = self.movement_input.load();
+        movement_input.x *= 0.98;
+        movement_input.z *= 0.98;
+        self.movement_input.store(movement_input);
 
         let suffocating = self.entity.tick_block_collisions(caller);
 
@@ -1517,9 +1527,16 @@ impl LivingEntity {
     }
 
     fn travel_in_air(&self, caller: &dyn EntityBase) {
-        // applyMovementInput
-
-        let effective_speed = self.get_attribute_value(&Attributes::MOVEMENT_SPEED);
+        if let Some((_, _, speed)) = caller.get_mob().and_then(|mob| mob.flying_travel_speeds()) {
+            self.entity
+                .update_velocity_from_input(self.movement_input.load(), speed);
+            self.make_move(caller);
+            self.entity
+                .velocity
+                .store(self.entity.velocity.load() * 0.91);
+            return;
+        }
+        let effective_speed = self.movement_speed(caller);
 
         let drag_modifier = self.get_attribute_value(&Attributes::AIR_DRAG_MODIFIER);
         let air_drag = modified_friction(0.91, drag_modifier);
@@ -1603,10 +1620,36 @@ impl LivingEntity {
 
     fn travel_in_fluid(&self, caller: &dyn EntityBase, water: bool) {
         let movement_input = self.movement_input.load();
+        if let Some((water_speed, lava_speed, _)) =
+            caller.get_mob().and_then(|mob| mob.flying_travel_speeds())
+        {
+            self.entity.update_velocity_from_input(
+                movement_input,
+                if water { water_speed } else { lava_speed },
+            );
+            self.make_move(caller);
+            self.entity
+                .velocity
+                .store(self.entity.velocity.load() * if water { 0.8 } else { 0.5 });
+            return;
+        }
+        if water
+            && let Some((speed, drag, drift)) = caller
+                .get_mob()
+                .and_then(|mob| mob.water_travel_parameters())
+        {
+            self.entity
+                .update_velocity_from_input(movement_input, speed);
+            self.make_move(caller);
+            self.entity
+                .velocity
+                .store(self.entity.velocity.load() * drag + Vector3::new(0.0, drift, 0.0));
+            return;
+        }
 
         let falling = self.entity.velocity.load().y <= 0.0;
         let gravity = self.get_effective_gravity(caller);
-        let effective_speed = self.get_attribute_value(&Attributes::MOVEMENT_SPEED);
+        let effective_speed = self.movement_speed(caller);
 
         if water {
             let mut friction = if self.entity.sprinting.load(Relaxed) {
@@ -1820,8 +1863,11 @@ impl LivingEntity {
         }
     }
 
-    fn jump(&self) {
-        let jump = self.get_jump_velocity(1.0);
+    fn jump(&self, caller: &dyn EntityBase) {
+        let multiplier = caller
+            .get_mob()
+            .map_or(1.0, |mob| mob.get_mob_jump_multiplier());
+        let jump = self.get_jump_velocity(multiplier);
 
         if jump <= 1.0e-5 {
             return;
@@ -1841,6 +1887,9 @@ impl LivingEntity {
         self.entity.velocity.store(velo);
 
         self.entity.velocity_dirty.store(true, SeqCst);
+        if let Some(mob) = caller.get_mob() {
+            mob.on_jump();
+        }
     }
 
     fn get_jump_velocity(&self, mut strength: f64) -> f64 {
