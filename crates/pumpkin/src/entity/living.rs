@@ -238,7 +238,7 @@ impl LivingEntity {
         entity_type.death_sound.unwrap_or(Sound::EntityGenericDeath)
     }
 
-    fn get_pitch(&self) -> f32 {
+    pub fn get_pitch(&self) -> f32 {
         let is_baby = self
             .get_mob()
             .and_then(|x| x.as_ageable())
@@ -1304,6 +1304,9 @@ impl LivingEntity {
     }
 
     fn get_effective_gravity(&self, caller: &dyn EntityBase) -> f64 {
+        if self.entity.has_no_gravity() {
+            return 0.0;
+        }
         let final_gravity = caller.get_gravity();
 
         if self.entity.velocity.load().y <= 0.0 && self.has_effect(&StatusEffect::SLOW_FALLING) {
@@ -1406,19 +1409,26 @@ impl LivingEntity {
             self.fall_distance.store(0.0);
         }
 
-        let touching_water = self.entity.touching_water.load(SeqCst);
-
-        // Strider is the only entity that has canWalkOnFluid = false
-
-        if (touching_water || self.entity.touching_lava.load(SeqCst))
-            && should_swim_in_fluids
-            && self.entity.entity_type != &EntityType::STRIDER
+        // A NoAI mob still receives environmental effects and collisions,
+        // but LivingEntity.aiStep does not simulate its travel.
+        if caller
+            .get_mob()
+            .is_none_or(|mob| !mob.get_mob_entity().is_no_ai())
         {
-            self.travel_in_fluid(caller, touching_water);
-        } else {
-            // TODO: Gliding
+            let touching_water = self.entity.touching_water.load(SeqCst);
 
-            self.travel_in_air(caller);
+            // Strider is the only entity that has canWalkOnFluid = false
+
+            if (touching_water || self.entity.touching_lava.load(SeqCst))
+                && should_swim_in_fluids
+                && self.entity.entity_type != &EntityType::STRIDER
+            {
+                self.travel_in_fluid(caller, touching_water);
+            } else {
+                // TODO: Gliding
+
+                self.travel_in_air(caller);
+            }
         }
 
         let suffocating = self.entity.tick_block_collisions(caller);
@@ -2322,7 +2332,7 @@ impl LivingEntity {
             let Ok(mut effects) = self.active_effects.try_lock() else {
                 return;
             };
-            let entity_age = self.entity.age.load(Relaxed);
+            let entity_age = self.entity.tick_count.load(Relaxed);
             for effect in effects.values_mut() {
                 if effect.duration == 0 {
                     effects_to_remove.push(effect.effect_type);
@@ -2715,7 +2725,10 @@ impl LivingEntity {
     }
 
     pub fn read_living_nbt_non_mut(&self, nbt: &NbtCompound) {
-        self.health.store(nbt.get_float("Health").unwrap_or(20.0));
+        // Summon data and bucket occupants may omit Health. Vanilla starts such
+        // entities at their own maximum, not the player's twenty health points.
+        let health = nbt.get_float("Health").unwrap_or(self.get_max_health());
+        self.health.store(health.clamp(0.0, self.get_max_health()));
 
         if let Some(equipment) = nbt.get_compound("equipment") {
             let mut guard = self
@@ -3265,7 +3278,7 @@ impl LivingEntity {
                 self.last_attacker_id
                     .store(attacker.get_entity().entity_id, Relaxed);
                 self.last_attacked_time
-                    .store(self.entity.age.load(Relaxed), Relaxed);
+                    .store(self.entity.tick_count.load(Relaxed).max(1), Relaxed);
             }
         }
 
@@ -3298,7 +3311,7 @@ impl LivingEntity {
                 let attacker_id = attacker.get_entity().entity_id;
                 self.last_attacker_id.store(attacker_id, Relaxed);
                 self.last_attacked_time
-                    .store(self.entity.age.load(Relaxed), Relaxed);
+                    .store(self.entity.tick_count.load(Relaxed).max(1), Relaxed);
 
                 let current_tick = world.level_info.load().day_time;
                 if attacker.get_player().is_some() {

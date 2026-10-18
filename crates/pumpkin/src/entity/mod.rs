@@ -912,6 +912,8 @@ pub struct Entity {
     pub riding_cooldown: AtomicI32,
     /// The age of the entity in ticks. Negative values indicate a baby.
     pub age: AtomicI32,
+    /// Runtime ticks since creation, independent of breeding age and cooldown.
+    pub tick_count: AtomicI32,
 
     pub current_biome: ArcSwap<&'static Biome>,
     pub last_biome_update_pos: AtomicCell<BlockPos>,
@@ -1064,6 +1066,7 @@ impl Entity {
 
             riding_cooldown: AtomicI32::new(0),
             age: AtomicI32::new(0),
+            tick_count: AtomicI32::new(0),
             current_biome: ArcSwap::new(Arc::new(current_biome)),
             last_biome_update_pos: AtomicCell::new(BlockPos::new(floor_x, floor_y, floor_z)),
             portal_cooldown: AtomicU32::new(0),
@@ -3247,7 +3250,14 @@ impl Entity {
             }
         }
 
-        let dimension = Self::get_entity_dimensions(pose);
+        // Player poses have player-specific dimensions. Applying those to a
+        // crouching ocelot or a long-jumping frog changes its size into a player.
+        // Mob-specific size transitions are handled by their dimension updates.
+        let dimension = if self.entity_type == &EntityType::PLAYER {
+            Self::get_entity_dimensions(pose)
+        } else {
+            self.entity_dimension.load()
+        };
         let position = self.pos.load();
         let aabb = BoundingBox::new_from_pos(position.x, position.y, position.z, &dimension);
         self.pose.store(pose);
@@ -4325,6 +4335,7 @@ impl Entity {
 
 impl EntityBase for Entity {
     fn tick(&self, caller: &dyn EntityBase, _server: &Server) {
+        self.tick_count.fetch_add(1, Ordering::Relaxed);
         // Recomputed during movement/block-collision handling in the same tick.
         let was_in_powder_snow = self.is_in_powder_snow.load(Ordering::Relaxed);
         self.was_in_powder_snow

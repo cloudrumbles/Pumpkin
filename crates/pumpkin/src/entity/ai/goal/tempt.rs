@@ -63,6 +63,10 @@ impl TemptGoal {
         self.running
     }
 
+    pub const fn set_can_scare(&mut self, can_scare: bool) {
+        self.can_scare = can_scare;
+    }
+
     #[must_use]
     pub fn with_tag(speed: f64, tag: &'static Tag, stop_distance: f64) -> Self {
         let mut goal = Self::with_stop_distance(speed, &[], false, stop_distance);

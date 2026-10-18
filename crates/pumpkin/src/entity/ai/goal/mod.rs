@@ -125,6 +125,46 @@ pub trait Goal: Send + Sync {
     }
 }
 
+/// Runs a vanilla goal only while a mob-specific state permits the activity.
+/// Stop hooks still execute when the condition changes (taming, growth, anger).
+pub struct ConditionalGoal {
+    inner: Box<dyn Goal>,
+    condition: fn(&dyn Mob) -> bool,
+}
+
+impl ConditionalGoal {
+    pub fn new(inner: Box<dyn Goal>, condition: fn(&dyn Mob) -> bool) -> Box<Self> {
+        Box::new(Self { inner, condition })
+    }
+}
+
+impl Goal for ConditionalGoal {
+    fn can_start(&mut self, mob: &dyn Mob) -> bool {
+        (self.condition)(mob) && self.inner.can_start(mob)
+    }
+    fn should_continue(&mut self, mob: &dyn Mob) -> bool {
+        (self.condition)(mob) && self.inner.should_continue(mob)
+    }
+    fn start(&mut self, mob: &dyn Mob) {
+        self.inner.start(mob);
+    }
+    fn stop(&mut self, mob: &dyn Mob) {
+        self.inner.stop(mob);
+    }
+    fn tick(&mut self, mob: &dyn Mob) {
+        self.inner.tick(mob);
+    }
+    fn should_run_every_tick(&self) -> bool {
+        self.inner.should_run_every_tick()
+    }
+    fn can_stop(&self) -> bool {
+        self.inner.can_stop()
+    }
+    fn controls(&self) -> Controls {
+        self.inner.controls()
+    }
+}
+
 #[derive(Clone, Copy, Default, PartialEq, Eq, Debug)]
 // We actually only use the first 4 bits ;)
 pub struct Controls(u8);

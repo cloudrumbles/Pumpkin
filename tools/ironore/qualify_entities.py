@@ -10,13 +10,15 @@ import hashlib
 import json
 import math
 import re
+import struct
 import time
+import uuid
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Callable
 
 from tools.ironore.qualify import (
-    Deadline, JavaBot, QualificationError, ServerProcess, free_loopback_port,
+    Deadline, JavaBot, NbtReader, QualificationError, ServerProcess, decode_varint_bytes, free_loopback_port,
     load_packet_ids, parse_nbt_bool, parse_position, write_pumpkin_config,
     write_vanilla_config,
 )
@@ -29,6 +31,134 @@ class Observation:
     detail: str
 
 
+def decode_metadata(payload: bytes) -> tuple[int, dict[int, object]]:
+    """Decode the metadata used by the behavior probes; reject unknown layouts."""
+    entity_id, offset = decode_varint_bytes(payload)
+    values: dict[int, object] = {}
+
+    def take(size: int) -> bytes:
+        nonlocal offset
+        end = offset + size
+        if size < 0 or end > len(payload):
+            raise QualificationError("truncated entity metadata")
+        value = payload[offset:end]
+        offset = end
+        return value
+
+    def varint() -> int:
+        nonlocal offset
+        value, offset = decode_varint_bytes(payload, offset)
+        return value
+
+    def string() -> str:
+        return take(varint()).decode("utf-8")
+
+    def nbt() -> object:
+        nonlocal offset
+        reader = NbtReader(payload[offset:])
+        tag = reader._u8()
+        value = reader._payload(tag) if tag else None
+        offset += reader._offset
+        return value
+
+    while True:
+        index = take(1)[0]
+        if index == 255:
+            if offset != len(payload):
+                raise QualificationError("trailing entity metadata")
+            return entity_id, values
+        kind = varint()
+        if kind == 0:
+            value = struct.unpack(">b", take(1))[0]
+        elif kind in (1, 12, 14, 15, 19, 20, 35, 36, 38, 42, 43):
+            value = varint()
+        elif kind == 2:
+            value = 0
+            for shift in range(0, 70, 7):
+                byte = take(1)[0]
+                value |= (byte & 127) << shift
+                if not byte & 128:
+                    break
+            else:
+                raise QualificationError("VarLong exceeds ten bytes")
+            if value & (1 << 63):
+                value -= 1 << 64
+        elif kind == 3:
+            value = struct.unpack(">f", take(4))[0]
+        elif kind == 4:
+            value = string()
+        elif kind == 5:
+            value = nbt()
+        elif kind == 6:
+            value = nbt() if take(1)[0] else None
+        elif kind == 8:
+            value = bool(take(1)[0])
+        elif kind in (9, 39):
+            value = struct.unpack(">fff", take(12))
+        elif kind == 10:
+            value = struct.unpack(">q", take(8))[0]
+        elif kind == 11:
+            value = struct.unpack(">q", take(8))[0] if take(1)[0] else None
+        elif kind == 13:
+            value = str(uuid.UUID(bytes=take(16))) if take(1)[0] else None
+        elif kind == 17 and varint() == 0:
+            value = []
+        elif kind == 18:
+            value = (varint(), varint(), varint())
+        elif kind in (21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 34):
+            value = varint()
+            if value == 0:
+                raise QualificationError(f"inline registry metadata {kind} needs a decoder")
+        elif kind == 33:
+            value = (string(), struct.unpack(">q", take(8))[0]) if take(1)[0] else None
+        elif kind == 40:
+            value = struct.unpack(">ffff", take(16))
+        else:
+            raise QualificationError(f"unsupported metadata serializer {kind}")
+        values[index] = value
+
+
+class EntityBot(JavaBot):
+    def __init__(self, *args: object, packet_ids: dict[str, int], **kwargs: object) -> None:
+        super().__init__(*args, **kwargs)
+        self.entity_packet_ids = packet_ids
+        self.spawned: dict[str, int] = {}
+        self.metadata_samples: dict[int, list[dict[int, object]]] = {}
+        self.metadata_errors: dict[int, str] = {}
+
+    def _handle(self, packet_id: int, payload: bytes) -> None:
+        if self._state == "play":
+            if packet_id == self.entity_packet_ids["add_entity"]:
+                entity_id, offset = decode_varint_bytes(payload)
+                entity_uuid = str(uuid.UUID(bytes=payload[offset:offset + 16]))
+                with self._condition:
+                    self.spawned[entity_uuid] = entity_id
+            elif packet_id == self.entity_packet_ids["set_entity_data"]:
+                entity_id, _ = decode_varint_bytes(payload)
+                try:
+                    _, values = decode_metadata(payload)
+                    with self._condition:
+                        self.metadata_samples.setdefault(entity_id, []).append(values)
+                except (ValueError, struct.error, QualificationError) as error:
+                    with self._condition:
+                        self.metadata_errors[entity_id] = str(error)
+        super()._handle(packet_id, payload)
+
+    def samples(self, nbt: str) -> list[dict[int, object]]:
+        match = re.search(r"UUID:\s*\[I;\s*([^]]+)\]", nbt)
+        if match is None:
+            raise QualificationError("entity UUID is absent from NBT")
+        words = [int(word.strip()) & 0xFFFFFFFF for word in match[1].split(",")]
+        entity_uuid = str(uuid.UUID(int=sum(word << (96 - i * 32) for i, word in enumerate(words))))
+        with self._condition:
+            entity_id = self.spawned.get(entity_uuid)
+            if entity_id is None:
+                raise QualificationError("entity spawn packet was not observed")
+            if entity_id in self.metadata_errors:
+                raise QualificationError(self.metadata_errors[entity_id])
+            return list(self.metadata_samples.get(entity_id, []))
+
+
 class EntityQualification:
     def __init__(self, args: argparse.Namespace) -> None:
         self.args = args
@@ -36,7 +166,7 @@ class EntityQualification:
         self.run_dir = args.run_dir.resolve()
         self.deadline = Deadline(args.timeout)
         self.port = free_loopback_port()
-        self.bot: JavaBot | None = None
+        self.bot: EntityBot | None = None
         self.observations: list[Observation] = []
         self.commands: list[dict[str, str]] = []
         command = [str(args.executable.resolve())] if args.backend == "pumpkin" else [
@@ -45,9 +175,18 @@ class EntityQualification:
         self.server = ServerProcess(command, self.run_dir, self.run_dir / "server.log", self.deadline)
 
     def command(self, text: str) -> str:
-        result = self.server.run_command(text).text
-        self.commands.append({"command": text, "result": result})
-        return result
+        end = time.monotonic() + 30.0
+        while True:
+            result = self.server.run_command(text, maximum=45.0 if text.startswith(("fill ", "setblock ")) else 5.0).text
+            self.commands.append({"command": text, "result": result})
+            if "not loaded" in result.lower() and text.startswith(("fill ", "setblock ")):
+                if time.monotonic() < end:
+                    self.wait(0.5)
+                    continue
+                raise QualificationError("fixture chunks did not load: " + result)
+            if any(error in result.lower() for error in ("incorrect argument", "unknown command", "invalid argument")):
+                raise QualificationError("command rejected: " + text + ": " + result)
+            return result
 
     def wait(self, seconds: float) -> None:
         assert self.bot is not None
@@ -86,10 +225,15 @@ class EntityQualification:
             self.observations.append(Observation(name, True, "observed expected behavior"))
         except (OSError, ValueError, QualificationError) as error:
             self.observations.append(Observation(name, False, str(error)))
+            if "command completion" in str(error) or "overall timeout" in str(error):
+                # A stalled console invalidates later observations. Do not report
+                # unrelated entity behaviors as failures from the same backlog.
+                print(json.dumps(asdict(self.observations[-1])), flush=True)
+                raise
         print(json.dumps(asdict(self.observations[-1])), flush=True)
 
     def no_ai(self, kind: str) -> None:
-        self.summon(kind, "frozen", extra="NoAI:1b,NoGravity:1b,Invulnerable:1b")
+        self.summon(kind, "frozen", extra="NoAI:1b,Invulnerable:1b")
         self.wait(0.15)
         before = parse_position(self.nbt("frozen"))
         self.wait(1.2)
@@ -104,8 +248,23 @@ class EntityQualification:
         self.wait(4.0)
         nbt = self.nbt("neutral_to_creative")
         self.require("AIBot" not in nbt and "AttackTarget" not in nbt, "creative player acquired as target: " + nbt)
+        assert self.bot is not None
+        samples = self.bot.samples(nbt)
+        if kind == "guardian":
+            attacks = [sample[17] for sample in samples if 17 in sample]
+            self.require(all(target == 0 for target in attacks),
+                         f"guardian beam target metadata: {attacks}")
+        elif kind == "vex":
+            flags = [int(sample[16]) for sample in samples if 16 in sample]
+            self.require(all(flag & 1 == 0 for flag in flags),
+                         f"vex charged creative player: {flags}")
+        elif kind == "bee":
+            anger = [int(sample[19]) for sample in samples if 19 in sample]
+            self.require(all(end <= 0 for end in anger),
+                         f"bee anger metadata: {anger}")
         if kind == "warden":
-            self.require("suspects: []" in nbt or "suspects:[]" in nbt or 'suspects: []' in nbt,
+            self.require(re.search(r'anger:\s*\{\s*\}', nbt) is not None
+                         or re.search(r'suspects:\s*\[\s*\]', nbt) is not None,
                          "warden gained anger from creative player: " + nbt)
 
     def pufferfish(self) -> None:
@@ -121,8 +280,29 @@ class EntityQualification:
         self.wait(6.0)
         observed = self.nbt("puffer")
         self.require(self.number(observed, "PuffState") == 0, "puffer did not deflate: " + observed)
-        self.command("fill 17 199 17 31 205 31 air")
-        self.command("fill 16 199 16 47 199 47 stone")
+
+    def guardian_attack(self) -> None:
+        self.command("fill 17 199 17 31 205 31 glass hollow")
+        self.command("fill 18 200 18 30 204 30 water")
+        self.command("tp AIBot 44.5 202 44.5")
+        self.summon("guardian", "beaming", 22.5, 202, 24.5)
+        self.summon("squid", "beam_prey", 28.5, 202, 24.5, "NoAI:1b")
+        self.wait(8.0)
+        guardian = self.nbt("beaming")
+        assert self.bot is not None
+        targets = [sample[17] for sample in self.bot.samples(guardian) if 17 in sample]
+        self.require(any(target > 0 for target in targets), f"guardian never announced a beam: {targets}")
+        prey = self.nbt("beam_prey")
+        self.require("Health" not in prey or self.number(prey, "Health") < 10,
+                     "guardian beam did not damage squid: " + prey)
+
+    def neutral_anger_expiry(self, kind: str) -> None:
+        self.summon(kind, "angry", 38.5, 200, 24.5,
+                    "AngerTime:10,angry_at:[I;1248,5821,3370,4920],NoGravity:1b,Invulnerable:1b")
+        self.wait(1.2)
+        nbt = self.nbt("angry")
+        self.require(self.number(nbt, "anger_end_time") == -1 and "angry_at" not in nbt,
+                     "expired persistent anger retained its target: " + nbt)
 
     def vex_lifetime(self) -> None:
         self.summon("vex", "short_lived", extra="NoAI:1b,life_ticks:1")
@@ -137,8 +317,6 @@ class EntityQualification:
         self.wait(1.0)
         nbt = self.command("data get entity @e[type=minecraft:frog,limit=1]")
         self.require("Health" in nbt and "variant" in nbt, "tadpole failed to become frog: " + nbt)
-        self.command("fill 17 199 17 31 205 31 air")
-        self.command("fill 16 199 16 47 199 47 stone")
 
     def tadpole_locked(self) -> None:
         self.summon("tadpole", "locked", extra="Age:23990,AgeLocked:1b,NoAI:1b,NoGravity:1b")
@@ -146,8 +324,9 @@ class EntityQualification:
         self.require(self.number(self.nbt("locked"), "Age") == 23990, "locked tadpole aged")
 
     def turtle_eggs(self) -> None:
-        self.command("fill 18 199 18 30 199 30 sand")
-        self.summon("turtle", "expecting", 24.5, 200, 24.5, 'has_egg:1b,home_pos:[I;24,200,24]')
+        self.command("fill 33 198 18 46 198 30 stone")
+        self.command("fill 33 199 18 46 199 30 sand")
+        self.summon("turtle", "expecting", 38.5, 200, 24.5, 'has_egg:1b,home_pos:[I;38,200,24]')
         end = time.monotonic() + 23.0
         last = ""
         while time.monotonic() < end:
@@ -160,24 +339,25 @@ class EntityQualification:
     def hive_release(self) -> None:
         self.command("time set 6000")
         self.command("weather clear")
-        self.command("setblock 24 200 24 beehive[facing=south,honey_level=0]")
-        self.command('data merge block 24 200 24 {bees:[{entity_data:{id:"minecraft:bee",HasNectar:1b,NoAI:1b,Age:-100},ticks_in_hive:2400,min_ticks_in_hive:2400}]}')
+        self.command("setblock 36 200 36 beehive[facing=south,honey_level=0]")
+        self.command('data merge block 36 200 36 {bees:[{entity_data:{id:"minecraft:bee",HasNectar:1b,NoAI:1b,Age:-100},ticks_in_hive:2400,min_ticks_in_hive:2400}]}')
         self.wait(1.5)
         bee = self.command("data get entity @e[type=minecraft:bee,limit=1]")
         self.require("Health" in bee and parse_nbt_bool(bee, "HasNectar") is False, "hive did not release delivered bee: " + bee)
-        result = self.command("execute if block 24 200 24 beehive[honey_level=1]")
-        self.require("passed" in result.lower() or "successful" in result.lower(), "honey did not increase: " + result)
+        results = [self.command(f"execute if block 36 200 36 beehive[honey_level={level}] run say IRONORE_HONEY_{level}") for level in (1, 2)]
+        self.require(any("IRONORE_HONEY_" in result for result in results),
+                     "honey did not increase: " + repr(results))
 
     def axolotl_dry_out(self) -> None:
-        self.summon("axolotl", "dry", extra="Air:0s,NoGravity:1b")
+        self.summon("axolotl", "dry", 40.5, 202, 40.5, "Air:0s,NoGravity:1b")
         self.wait(1.5)
         nbt = self.nbt("dry")
         self.require(self.number(nbt, "Health") < 14, "dry axolotl took no damage: " + nbt)
 
     def frog_tongue(self) -> None:
-        self.command("fill 18 199 18 30 199 30 grass_block")
-        self.summon("frog", "hunter", 24.5, 200, 24.5)
-        self.summon("slime", "prey", 26, 200, 24.5, "Size:0,NoAI:1b")
+        self.command("fill 33 199 18 46 199 30 grass_block")
+        self.summon("frog", "hunter", 38.5, 200, 24.5)
+        self.summon("slime", "prey", 40, 200, 24.5, "Size:0,NoAI:1b")
         self.wait(7.0)
         result = self.nbt("prey")
         self.require("Health" not in result or self.number(result, "Health") <= 0, "frog did not consume small slime: " + result)
@@ -188,8 +368,6 @@ class EntityQualification:
         self.run_dir.mkdir(parents=True)
         if self.args.backend == "pumpkin":
             write_pumpkin_config(self.run_dir, self.port)
-            config = self.run_dir / "config" / "pumpkin.toml"
-            # The existing harness writes basic.toml at the root config directory.
             candidates = list(self.run_dir.rglob("*.toml"))
             for config in candidates:
                 text = config.read_text().replace('default_difficulty = "Peaceful"', 'default_difficulty = "Normal"')
@@ -198,18 +376,19 @@ class EntityQualification:
             write_vanilla_config(self.run_dir, self.port, self.args.eula_source)
         try:
             self.server.start("Server is now running. Connect using port:" if self.args.backend == "pumpkin" else "Done (")
-            self.bot = JavaBot(self.port, load_packet_ids(self.repo), self.deadline, "AIBot")
+            packet_ids = json.loads((self.repo / "assets" / "packets.json").read_text())["clientbound"]["play"]
+            self.bot = EntityBot(self.port, load_packet_ids(self.repo), self.deadline, "AIBot", packet_ids=packet_ids)
             self.bot.connect()
             self.bot.wait_ready()
             self.server.wait_for_text("AIBot joined the game", "AI bot join")
             self.command("difficulty normal")
-            self.command("gamerule minecraft:spawn_mobs false")
+            self.command("gamerule spawn_mobs false")
             self.command("gamemode creative AIBot")
             self.command("forceload add 16 16 47 47")
             self.command("tp AIBot 40.5 202 40.5")
             self.wait(1.5)
-            self.command("fill 16 199 16 47 199 47 stone")
-            self.command("fill 16 200 16 47 213 47 air")
+            self.command("fill 20 199 20 29 199 29 stone")
+            self.command("fill 20 200 20 29 210 29 air")
             if self.args.suite in ("all", "no-ai"):
                 registry = json.loads((self.repo / "assets" / "entities.json").read_text())
                 for name, value in registry.items():
@@ -218,6 +397,7 @@ class EntityQualification:
             if self.args.suite in ("all", "behavior"):
                 for name in ("warden", "guardian", "vex", "phantom", "bee"):
                     self.case("creative_target_veto_" + name, lambda name=name: self.veto_creative(name))
+                self.case("guardian_beam_damages_squid", self.guardian_attack)
                 self.case("pufferfish_inflate_and_deflate", self.pufferfish)
                 self.case("vex_limited_lifetime", self.vex_lifetime)
                 self.case("tadpole_metamorphosis", self.tadpole_growth)
@@ -226,6 +406,8 @@ class EntityQualification:
                 self.case("bee_nectar_delivery", self.hive_release)
                 self.case("axolotl_dry_out", self.axolotl_dry_out)
                 self.case("frog_consumes_small_slime", self.frog_tongue)
+                for name in ("bee", "enderman", "iron_golem", "polar_bear", "wolf", "zombified_piglin"):
+                    self.case("neutral_anger_expires_" + name, lambda name=name: self.neutral_anger_expiry(name))
         except (OSError, ValueError, QualificationError) as error:
             self.observations.append(Observation("harness_prerequisite", False, str(error)))
         finally:

@@ -12,6 +12,7 @@ pub struct WanderAroundGoal {
     target: Option<Vector3<f64>>,
     interval: i32,
     force_trigger: bool,
+    water_probability: Option<f32>,
 }
 
 impl WanderAroundGoal {
@@ -28,6 +29,7 @@ impl WanderAroundGoal {
             target: None,
             interval,
             force_trigger: false,
+            water_probability: None,
         }
     }
 
@@ -40,7 +42,27 @@ impl WanderAroundGoal {
         self.interval = interval;
     }
 
-    fn get_position(mob: &dyn Mob) -> Option<Vector3<f64>> {
+    #[must_use]
+    pub fn avoiding_water(speed: f64, water_probability: f32) -> Self {
+        let mut goal = Self::new(speed);
+        goal.water_probability = Some(water_probability);
+        goal
+    }
+
+    fn get_position(&self, mob: &dyn Mob) -> Option<Vector3<f64>> {
+        if let Some(probability) = self.water_probability {
+            if mob
+                .get_entity()
+                .touching_water
+                .load(std::sync::atomic::Ordering::Relaxed)
+            {
+                return crate::entity::ai::util::land_random_pos::get_pos(mob, 15, 7)
+                    .or_else(|| default_random_pos::get_pos(mob, 10, 7));
+            }
+            if mob.get_random().random::<f32>() >= probability {
+                return crate::entity::ai::util::land_random_pos::get_pos(mob, 10, 7);
+            }
+        }
         default_random_pos::get_pos(mob, 10, 7)
     }
 }
@@ -63,7 +85,7 @@ impl Goal for WanderAroundGoal {
             }
         }
 
-        self.target = Self::get_position(mob);
+        self.target = self.get_position(mob);
         if self.target.is_none() {
             return false;
         }

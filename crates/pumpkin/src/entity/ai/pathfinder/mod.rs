@@ -368,6 +368,7 @@ impl EvaluatorKind {
 pub trait PathNavigationTrait: Send + Sync {
     fn set_progress(&mut self, goal: NavigatorGoal);
     fn set_speed(&mut self, speed: f64);
+    fn get_speed_modifier(&self) -> f64;
     fn stop(&mut self);
     fn is_idle(&self) -> bool;
     fn is_done(&self) -> bool;
@@ -503,6 +504,15 @@ impl PathNavigation {
     pub fn set_progress(&mut self, goal: NavigatorGoal) {
         self.is_idle.store(false, Ordering::Relaxed);
         self.speed_modifier = goal.speed;
+        let same_destination = self.current_goal.as_ref().is_some_and(|old| {
+            old.destination.x.floor() == goal.destination.x.floor()
+                && old.destination.y.floor() == goal.destination.y.floor()
+                && old.destination.z.floor() == goal.destination.z.floor()
+        });
+        if same_destination && self.path.as_ref().is_some_and(|path| !path.is_done()) {
+            self.current_goal = Some(goal);
+            return;
+        }
         self.last_stuck_check = self.tick_count;
         self.last_stuck_check_pos = goal.current_progress;
         self.current_goal = Some(goal);
@@ -1185,6 +1195,10 @@ impl PathNavigationTrait for GroundPathNavigation {
         self.inner.set_speed(speed);
     }
 
+    fn get_speed_modifier(&self) -> f64 {
+        self.inner.speed_modifier
+    }
+
     fn stop(&mut self) {
         self.inner.stop();
     }
@@ -1419,6 +1433,10 @@ impl PathNavigationTrait for FlyingPathNavigation {
 
     fn set_speed(&mut self, speed: f64) {
         self.inner.set_speed(speed);
+    }
+
+    fn get_speed_modifier(&self) -> f64 {
+        self.inner.speed_modifier
     }
 
     fn stop(&mut self) {
@@ -1722,6 +1740,10 @@ impl PathNavigationTrait for WaterBoundPathNavigation {
         self.inner.set_speed(speed);
     }
 
+    fn get_speed_modifier(&self) -> f64 {
+        self.inner.speed_modifier
+    }
+
     fn stop(&mut self) {
         self.inner.stop();
     }
@@ -2022,6 +2044,10 @@ impl PathNavigationTrait for WallClimberNavigation {
         self.inner.set_speed(speed);
     }
 
+    fn get_speed_modifier(&self) -> f64 {
+        self.inner.get_speed_modifier()
+    }
+
     fn stop(&mut self) {
         self.path_to_position = None;
         self.inner.stop();
@@ -2246,6 +2272,10 @@ impl PathNavigationTrait for AmphibiousPathNavigation {
 
     fn set_speed(&mut self, speed: f64) {
         self.inner.set_speed(speed);
+    }
+
+    fn get_speed_modifier(&self) -> f64 {
+        self.inner.speed_modifier
     }
 
     fn stop(&mut self) {

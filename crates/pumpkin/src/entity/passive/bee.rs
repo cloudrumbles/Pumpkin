@@ -21,7 +21,6 @@ use pumpkin_nbt::compound::NbtCompound;
 use pumpkin_protocol::codec::var_int::VarInt;
 use pumpkin_util::math::{position::BlockPos, vector3::Vector3};
 use pumpkin_world::world::BlockFlags;
-use uuid::Uuid;
 
 use crate::entity::{
     Entity, EntityBase,
@@ -49,8 +48,6 @@ pub struct BeeEntity {
     pub time_since_sting: AtomicI32,
     pub hive_position: AtomicCell<Option<BlockPos>>,
     pub flower_position: AtomicCell<Option<BlockPos>>,
-    anger_time: AtomicI32,
-    anger_target: AtomicCell<Option<Uuid>>,
     underwater_ticks: AtomicI32,
 }
 
@@ -71,8 +68,6 @@ impl BeeEntity {
             time_since_sting: AtomicI32::new(0),
             hive_position: AtomicCell::new(None),
             flower_position: AtomicCell::new(None),
-            anger_time: AtomicI32::new(0),
-            anger_target: AtomicCell::new(None),
             underwater_ticks: AtomicI32::new(0),
         };
         let mob_arc = Arc::new(bee);
@@ -117,7 +112,16 @@ impl BeeEntity {
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
 
-            target_selector.add_goal(1, Box::new(RevengeGoal::new(true).alerting_others()));
+            target_selector.add_goal(
+                1,
+                Box::new(
+                    RevengeGoal::new(true)
+                        .alerting_others_when(|mob, _, attacker| {
+                            mob.has_line_of_sight(attacker.get_entity())
+                        })
+                        .continuing_when(|mob| mob.can_target_while_angry()),
+                ),
+            );
         };
 
         mob_arc
@@ -127,7 +131,7 @@ impl BeeEntity {
         let entity = self.get_entity();
         !self.has_stung()
             && self.cannot_enter_hive_ticks.load(Ordering::Relaxed) <= 0
-            && self.mob_entity.get_target().is_none()
+            && !self.mob_entity.anger.is_angry(self)
             && (self.has_nectar()
                 || self.ticks_without_nectar.load(Ordering::Relaxed) > 3600
                 || entity
@@ -142,10 +146,11 @@ impl BeeEntity {
         let entity = self.get_entity();
         let world = entity.world.load();
         if let Some(target) = world.get_entity_by_uuid(target.get_entity().entity_uuid) {
-            self.anger_target
+            self.mob_entity
+                .anger
+                .target
                 .store(Some(target.get_entity().entity_uuid));
-            self.anger_time
-                .store(rand::random_range(20..=39) * 20, Ordering::Relaxed);
+            self.mob_entity.anger.refresh(self);
             self.mob_entity.set_target(Some(target));
         }
     }
@@ -159,9 +164,6 @@ impl BeeEntity {
         }
         let entity = self.get_entity();
         let world = entity.world.load();
-        if !world.level_info.load().game_rules.mob_griefing {
-            return;
-        }
         for down in 1..=2 {
             let pos = entity.block_pos.load().offset(Vector3::new(0, -down, 0));
             let (block, state) = world.get_block_and_state_id(&pos);
@@ -293,40 +295,8 @@ impl Mob for BeeEntity {
         if !self.has_nectar() {
             self.ticks_without_nectar.fetch_add(1, Ordering::Relaxed);
         }
-        if let Some(target) = self.mob_entity.get_target() {
-            if self.has_stung()
-                || !crate::entity::ai::goal::is_valid_attack_target(self, target.as_ref())
-            {
-                self.mob_entity.set_target(None);
-            } else if self.anger_target.load() != Some(target.get_entity().entity_uuid) {
-                self.become_angry_at(target.as_ref());
-            }
-        } else if self.anger_time.load(Ordering::Relaxed) > 0
-            && let Some(target) = self
-                .anger_target
-                .load()
-                .and_then(|uuid| entity.world.load().get_entity_by_uuid(uuid))
-        {
-            if crate::entity::ai::goal::is_valid_attack_target(self, target.as_ref()) {
-                self.mob_entity.set_target(Some(target));
-            }
-        }
-        if self.anger_time.load(Ordering::Relaxed) > 0
-            && self.anger_time.fetch_sub(1, Ordering::Relaxed) == 1
-        {
-            self.anger_target.store(None);
-            self.mob_entity.set_target(None);
-        }
-        let anger = self.anger_time.load(Ordering::Relaxed);
-        if entity.world.load().get_world_age() % 20 == 0 {
-            entity.set_synced_data(
-                pumpkin_data::tracked_data::bee::DATA_ANGER_END_TIME,
-                if anger > 0 {
-                    entity.world.load().get_world_age() + i64::from(anger)
-                } else {
-                    -1
-                },
-            );
+        if self.has_stung() {
+            self.mob_entity.anger.stop(self);
         }
         self.set_rolling(self.mob_entity.get_target().is_some_and(|target| {
             entity
@@ -366,10 +336,6 @@ impl Mob for BeeEntity {
                 );
             }
         }
-        nbt.put_int("AngerTime", self.anger_time.load(Ordering::Relaxed));
-        if let Some(uuid) = self.anger_target.load() {
-            nbt.put_uuid("AngryAt", uuid);
-        }
         nbt.put_bool("HasNectar", self.has_nectar());
         nbt.put_bool("HasStung", self.has_stung());
         nbt.put_int(
@@ -398,9 +364,6 @@ impl Mob for BeeEntity {
                 field.store(Some(BlockPos::new(pos[0], pos[1], pos[2])));
             }
         }
-        self.anger_time
-            .store(nbt.get_int("AngerTime").unwrap_or(0), Ordering::Relaxed);
-        self.anger_target.store(nbt.get_uuid("AngryAt"));
         if let Some(nectar) = nbt.get_bool("HasNectar") {
             self.set_has_nectar(nectar);
         }
@@ -527,9 +490,7 @@ impl Goal for BeeStingGoal {
                     );
                 }
                 b.set_has_stung(true);
-                b.anger_time.store(0, Ordering::Relaxed);
-                b.anger_target.store(None);
-                b.mob_entity.set_target(None);
+                b.mob_entity.anger.stop(b);
                 entity.play_sound(Sound::EntityBeeSting);
             }
         }

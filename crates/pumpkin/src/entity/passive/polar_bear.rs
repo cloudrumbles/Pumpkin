@@ -1,21 +1,23 @@
 use std::sync::{
     Arc, Weak,
-    atomic::{AtomicBool, Ordering},
+    atomic::{AtomicBool, AtomicI32, Ordering},
 };
 
 use pumpkin_data::entity::EntityType;
 use pumpkin_data::item_stack::ItemStack;
 use pumpkin_data::sound::Sound;
+use pumpkin_data::tag;
 use pumpkin_nbt::compound::NbtCompound;
 
 use crate::entity::{
     Entity, EntityBase,
     ageable::{AgeableData, AgeableMob},
     ai::goal::{
-        active_target::ActiveTargetGoal, escape_danger::EscapeDangerGoal,
-        follow_parent::FollowParentGoal, look_around::RandomLookAroundGoal,
-        look_at_entity::LookAtEntityGoal, melee_attack::MeleeAttackGoal, revenge::RevengeGoal,
-        swim::SwimGoal, wander_around::WanderAroundGoal,
+        ConditionalGoal, Controls, Goal, active_target::ActiveTargetGoal,
+        escape_danger::EscapeDangerGoal, follow_parent::FollowParentGoal,
+        look_around::RandomLookAroundGoal, look_at_entity::LookAtEntityGoal,
+        melee_attack::MeleeAttackGoal, revenge::RevengeGoal, swim::SwimGoal,
+        wander_around::WanderAroundGoal,
     },
     mob::{Mob, MobEntity},
     passive::animal::Animal,
@@ -26,6 +28,7 @@ pub struct PolarBearEntity {
     pub mob_entity: MobEntity,
     pub ageable_data: AgeableData,
     pub standing: AtomicBool,
+    warning_sound_ticks: AtomicI32,
 }
 
 impl PolarBearEntity {
@@ -35,6 +38,7 @@ impl PolarBearEntity {
             mob_entity,
             ageable_data: AgeableData::default(),
             standing: AtomicBool::new(false),
+            warning_sound_ticks: AtomicI32::new(0),
         };
         let mob_arc = Arc::new(polar_bear);
         let mob_weak: Weak<dyn Mob> = {
@@ -50,8 +54,22 @@ impl PolarBearEntity {
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
 
             goal_selector.add_goal(0, Box::new(SwimGoal::default()));
-            goal_selector.add_goal(1, Box::new(MeleeAttackGoal::new(1.25, true)));
-            goal_selector.add_goal(1, EscapeDangerGoal::new(2.0));
+            goal_selector.add_goal(
+                1,
+                Box::new(PolarBearMeleeGoal(
+                    MeleeAttackGoal::new(1.25, true).with_attack_handler(Self::attack_tick),
+                )),
+            );
+            goal_selector.add_goal(
+                1,
+                EscapeDangerGoal::with_tag_selector(2.0, |mob| {
+                    if mob.as_ageable().is_some_and(AgeableMob::is_baby) {
+                        &tag::DamageType::MINECRAFT_PANIC_CAUSES
+                    } else {
+                        &tag::DamageType::MINECRAFT_PANIC_ENVIRONMENTAL_CAUSES
+                    }
+                }),
+            );
             goal_selector.add_goal(4, Box::new(FollowParentGoal::new(1.25)));
             goal_selector.add_goal(5, Box::new(WanderAroundGoal::new(1.0)));
             goal_selector.add_goal(
@@ -68,14 +86,55 @@ impl PolarBearEntity {
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
 
-            target_selector.add_goal(1, Box::new(RevengeGoal::new(true)));
+            target_selector.add_goal(
+                1,
+                Box::new(PolarBearRevengeGoal(
+                    RevengeGoal::new(true).alerting_others_when(|mob, other, _| {
+                        mob.as_ageable().is_some_and(AgeableMob::is_baby)
+                            && other.as_ageable().is_some_and(|bear| !bear.is_baby())
+                    }),
+                )),
+            );
+            let bear = Arc::downgrade(&mob_arc);
             target_selector.add_goal(
                 2,
-                ActiveTargetGoal::with_default(&mob_arc.mob_entity, &EntityType::PLAYER, false),
+                Box::new(
+                    ActiveTargetGoal::new(
+                        &mob_arc.mob_entity,
+                        &EntityType::PLAYER,
+                        20,
+                        true,
+                        true,
+                        Some(
+                            move |_: &crate::entity::living::LivingEntity,
+                                  world: &crate::world::World| {
+                                let Some(bear) = bear.upgrade() else {
+                                    return false;
+                                };
+                                if bear.is_baby() {
+                                    return false;
+                                }
+                                let area =
+                                    bear.get_entity().bounding_box.load().expand(8.0, 4.0, 8.0);
+                                world.get_entities_at_box(&area).iter().any(|entity| {
+                                    entity.get_entity().entity_type == &EntityType::POLAR_BEAR
+                                        && entity
+                                            .get_mob()
+                                            .and_then(Mob::as_ageable)
+                                            .is_some_and(AgeableMob::is_baby)
+                                })
+                            },
+                        ),
+                    )
+                    .with_range_multiplier(0.5),
+                ),
             );
             target_selector.add_goal(
-                3,
-                ActiveTargetGoal::with_default(&mob_arc.mob_entity, &EntityType::FOX, true),
+                4,
+                ConditionalGoal::new(
+                    ActiveTargetGoal::with_default(&mob_arc.mob_entity, &EntityType::FOX, true),
+                    |mob| mob.as_ageable().is_some_and(|bear| !bear.is_baby()),
+                ),
             );
         };
 
@@ -94,6 +153,38 @@ impl PolarBearEntity {
             pumpkin_data::tracked_data::polar_bear::DATA_STANDING_ID,
             standing,
         );
+    }
+
+    fn attack_tick(mob: &dyn Mob, target: &dyn EntityBase, goal: &mut MeleeAttackGoal) {
+        let Some(bear) = mob.cast_any().downcast_ref::<Self>() else {
+            return;
+        };
+        if goal.can_perform_attack(mob, target) {
+            goal.cooldown = goal.get_max_cooldown();
+            mob.get_mob_entity().try_attack(mob, target);
+            bear.set_standing(false);
+        } else if mob
+            .get_entity()
+            .pos
+            .load()
+            .squared_distance_to_vec(&target.get_entity().pos.load())
+            < f64::from(target.get_entity().entity_dimension.load().width + 3.0).powi(2)
+        {
+            if goal.cooldown <= 0 {
+                bear.set_standing(false);
+                goal.cooldown = goal.get_max_cooldown();
+            }
+            if goal.cooldown <= 10 {
+                bear.set_standing(true);
+                if bear.warning_sound_ticks.load(Ordering::Relaxed) <= 0 {
+                    bear.get_entity().play_sound(Sound::EntityPolarBearWarning);
+                    bear.warning_sound_ticks.store(40, Ordering::Relaxed);
+                }
+            }
+        } else {
+            goal.cooldown = goal.get_max_cooldown();
+            bear.set_standing(false);
+        }
     }
 }
 
@@ -132,6 +223,9 @@ impl Mob for PolarBearEntity {
 
     fn mob_tick(&self, _caller: &dyn EntityBase) {
         self.ageable_ai_step();
+        if self.warning_sound_ticks.load(Ordering::Relaxed) > 0 {
+            self.warning_sound_ticks.fetch_sub(1, Ordering::Relaxed);
+        }
     }
 
     fn mob_init_data_tracker(&self) {
@@ -148,5 +242,57 @@ impl Mob for PolarBearEntity {
 
     fn mob_interact(&self, player: &Arc<Player>, item_stack: &mut ItemStack) -> bool {
         self.animal_interact(player, item_stack, Sound::EntityPolarBearAmbient)
+    }
+}
+
+struct PolarBearMeleeGoal(MeleeAttackGoal);
+
+impl Goal for PolarBearMeleeGoal {
+    fn can_start(&mut self, mob: &dyn Mob) -> bool {
+        self.0.can_start(mob)
+    }
+    fn should_continue(&mut self, mob: &dyn Mob) -> bool {
+        self.0.should_continue(mob)
+    }
+    fn start(&mut self, mob: &dyn Mob) {
+        self.0.start(mob);
+    }
+    fn tick(&mut self, mob: &dyn Mob) {
+        self.0.tick(mob);
+    }
+    fn stop(&mut self, mob: &dyn Mob) {
+        self.0.stop(mob);
+        if let Some(bear) = mob.cast_any().downcast_ref::<PolarBearEntity>() {
+            bear.set_standing(false);
+        }
+    }
+    fn controls(&self) -> Controls {
+        self.0.controls()
+    }
+    fn should_run_every_tick(&self) -> bool {
+        true
+    }
+}
+
+struct PolarBearRevengeGoal(RevengeGoal);
+
+impl Goal for PolarBearRevengeGoal {
+    fn can_start(&mut self, mob: &dyn Mob) -> bool {
+        self.0.can_start(mob)
+    }
+    fn should_continue(&mut self, mob: &dyn Mob) -> bool {
+        !mob.as_ageable().is_some_and(AgeableMob::is_baby) && self.0.should_continue(mob)
+    }
+    fn start(&mut self, mob: &dyn Mob) {
+        self.0.start(mob);
+        if mob.as_ageable().is_some_and(AgeableMob::is_baby) {
+            mob.set_mob_target(None);
+        }
+    }
+    fn stop(&mut self, mob: &dyn Mob) {
+        self.0.stop(mob);
+    }
+    fn controls(&self) -> Controls {
+        self.0.controls()
     }
 }

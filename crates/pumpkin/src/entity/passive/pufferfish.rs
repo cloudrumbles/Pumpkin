@@ -72,8 +72,9 @@ impl PufferfishEntity {
 
     fn is_scary(&self, target: &dyn EntityBase) -> bool {
         target.get_entity().entity_id != self.get_entity().entity_id
-            && target.get_living_entity().is_some()
-            && target.get_entity().is_alive()
+            && target
+                .get_living_entity()
+                .is_some_and(|living| living.is_alive())
             && !target.is_spectator()
             && !target.get_player().is_some_and(|p| p.is_creative())
             && !target

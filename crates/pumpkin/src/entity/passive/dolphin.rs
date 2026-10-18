@@ -202,7 +202,7 @@ impl Mob for DolphinEntity {
                 .saturating_sub(1)
         };
         self.moistness_level.store(moisture, Ordering::Relaxed);
-        if entity.age.load(Ordering::Relaxed) % 20 == 0 {
+        if entity.tick_count.load(Ordering::Relaxed) % 20 == 0 {
             entity.set_synced_data(
                 pumpkin_data::tracked_data::dolphin::MOISTNESS_LEVEL,
                 VarInt(moisture),

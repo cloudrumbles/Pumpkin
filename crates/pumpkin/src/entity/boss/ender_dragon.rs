@@ -855,7 +855,7 @@ impl Mob for EnderDragonEntity {
         &self.mob_entity
     }
 
-    fn mob_tick(&self, _caller: &dyn EntityBase) {
+    fn custom_server_ai_step(&self, _caller: &dyn EntityBase) {
         self.ai_step();
     }
 

@@ -657,7 +657,7 @@ class ServerProcess:
         self._reader.start()
         self.wait_for_text(readiness, "server readiness")
 
-    def run_command(self, command: str) -> CommandResult:
+    def run_command(self, command: str, *, maximum: float = COMMAND_WAIT_SECONDS) -> CommandResult:
         completion_command, completion_marker = command_completion_probe()
         with self._condition:
             start = len(self._lines)
@@ -666,7 +666,7 @@ class ServerProcess:
             completion_marker,
             f"command completion: {command}",
             start,
-            maximum=COMMAND_WAIT_SECONDS,
+            maximum=maximum,
         )
         with self._condition:
             relevant = tuple(

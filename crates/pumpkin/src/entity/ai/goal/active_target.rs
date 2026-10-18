@@ -19,6 +19,7 @@ pub struct ActiveTargetGoal {
     reciprocal_chance: i32,
     target_type: Option<&'static EntityType>,
     target_predicate: TargetPredicate,
+    range_multiplier: f64,
 }
 
 impl ActiveTargetGoal {
@@ -49,6 +50,7 @@ impl ActiveTargetGoal {
             reciprocal_chance: to_goal_ticks(reciprocal_chance),
             target_type: Some(target_type),
             target_predicate,
+            range_multiplier: 1.0,
         }
     }
 
@@ -70,6 +72,7 @@ impl ActiveTargetGoal {
             reciprocal_chance: to_goal_ticks(DEFAULT_RECIPROCAL_CHANCE),
             target_type: Some(target_type),
             target_predicate,
+            range_multiplier: 1.0,
         })
     }
 
@@ -96,6 +99,7 @@ impl ActiveTargetGoal {
             reciprocal_chance: to_goal_ticks(reciprocal_chance),
             target_type: None,
             target_predicate,
+            range_multiplier: 1.0,
         })
     }
 
@@ -103,11 +107,19 @@ impl ActiveTargetGoal {
         self.target = target;
     }
 
+    #[must_use]
+    pub fn with_range_multiplier(mut self, multiplier: f64) -> Self {
+        self.range_multiplier = multiplier;
+        self.track_target_goal.range_multiplier = multiplier;
+        self
+    }
+
     fn find_closest_target(&mut self, mob: &dyn Mob) {
         let mob_entity = mob.get_mob_entity();
         let follow_range = mob_entity
             .living_entity
-            .get_attribute_value(&Attributes::FOLLOW_RANGE);
+            .get_attribute_value(&Attributes::FOLLOW_RANGE)
+            * self.range_multiplier;
 
         // Vanilla updates the target conditions with the current follow distance on every search
         self.target_predicate.base_max_distance = follow_range;
