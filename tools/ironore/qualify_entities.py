@@ -106,9 +106,9 @@ def decode_metadata(payload: bytes) -> tuple[int, dict[int, object]]:
         elif kind == 18:
             value = (varint(), varint(), varint())
         elif kind in (21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 34):
+            # These serializers use holderRegistry: zero is a registry ID,
+            # not the inline-holder sentinel used by the separate holder codec.
             value = varint()
-            if value == 0:
-                raise QualificationError(f"inline registry metadata {kind} needs a decoder")
         elif kind == 33:
             value = (string(), struct.unpack(">q", take(8))[0]) if take(1)[0] else None
         elif kind == 40:
@@ -429,6 +429,50 @@ class EntityQualification:
         self.require(furthest >= 1.5 and vertical >= 0.25,
                      f"{kind} failed to move through its habitat: displacement={furthest}, vertical={vertical}")
 
+    def ageable_growth(self, kind: str, locked: bool) -> None:
+        self.command("gamemode creative AIBot")
+        self.command("tp AIBot 40.5 202 40.5")
+        self.summon(kind, "ageable", 38.5, 202, 40.5,
+                    f"Age:-12,AgeLocked:{int(locked)}b,NoAI:1b,NoGravity:1b,Invulnerable:1b")
+        self.wait(1.2)
+        result = self.nbt("ageable")
+        expected = -12 if locked else 0
+        self.require(self.number(result, "Age") == expected,
+                     f"{kind} age should be {expected}: " + result)
+        self.require(parse_nbt_bool(result, "AgeLocked") is locked,
+                     f"{kind} lost the age-lock state: " + result)
+        assert self.bot is not None
+        samples = self.bot.samples(result)
+        baby_states = [sample[16] for sample in samples if 16 in sample]
+        self.require(bool(baby_states) and baby_states[-1] is locked,
+                     f"{kind} baby metadata did not follow age: {baby_states}")
+        if locked:
+            locks = [sample[17] for sample in samples if 17 in sample]
+            self.require(bool(locks) and locks[-1] is True,
+                         f"{kind} age-lock metadata was not sent: {locks}")
+
+    def cow_breeding(self) -> None:
+        self.command("gamemode creative AIBot")
+        self.command("tp AIBot 44.5 202 44.5")
+        self.command("fill 33 199 18 46 199 30 grass_block")
+        self.command("fill 33 200 18 46 205 30 air")
+        self.summon("cow", "breeder_one", 38.5, 200, 24.5, "Age:0,InLove:600")
+        self.summon("cow", "breeder_two", 40.5, 200, 24.5, "Age:0,InLove:600")
+        self.command("tag @e[type=minecraft:cow] add parent")
+        end = self.game_time() + 200
+        child = ""
+        while self.game_time() < end:
+            self.wait(1.0)
+            child = self.command("data get entity @e[type=minecraft:cow,tag=!parent,limit=1]")
+            if "Health" in child:
+                break
+        self.require("Health" in child and -24000 <= self.number(child, "Age") < -23000,
+                     "breeding did not create a baby cow: " + child)
+        for parent in ("breeder_one", "breeder_two"):
+            result = self.nbt(parent)
+            self.require(5700 < self.number(result, "Age") <= 6000 and self.number(result, "InLove") == 0,
+                         "parent did not enter its age-based breeding cooldown: " + result)
+
     def run(self) -> int:
         if self.run_dir.exists():
             raise QualificationError("--run-dir must be new")
@@ -482,6 +526,17 @@ class EntityQualification:
                 self.case("ground_zombie_routes_around_wall", self.ground_navigation)
                 self.case("water_cod_random_swim", lambda: self.ambient_movement("cod", True))
                 self.case("flying_allay_wander", lambda: self.ambient_movement("allay", False))
+                inventory = json.loads((self.repo / "tools" / "ironore" / "entity-parity-26.3.json").read_text())
+                cannot_be_babies = {"camel_husk", "frog", "magma_cube", "parrot", "slime", "sulfur_cube", "wandering_trader", "zombie_nautilus"}
+                for entry in inventory["entities"]:
+                    name = entry["entity"]
+                    if name not in cannot_be_babies and any(path.endswith("/AgeableMob.java") for path in entry["java_classes"]):
+                        # Undead horses retain their age while NoAI; the age lock is
+                        # still serialized and round-tripped in the Java reference.
+                        if name not in {"skeleton_horse", "zombie_horse"}:
+                            self.case("ageable_growth_" + name, lambda name=name: self.ageable_growth(name, False))
+                        self.case("ageable_locked_" + name, lambda name=name: self.ageable_growth(name, True))
+                self.case("cow_breeding_and_parent_cooldowns", self.cow_breeding)
         except (OSError, ValueError, QualificationError) as error:
             self.observations.append(Observation("harness_prerequisite", False, str(error)))
         finally:
