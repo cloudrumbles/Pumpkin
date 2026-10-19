@@ -283,9 +283,15 @@ class EntityQualification:
         self.command("fill 17 199 17 31 205 31 glass hollow")
         self.command("fill 18 200 18 30 204 30 water")
         self.command("tp AIBot 44.5 202 44.5")
-        self.summon("pufferfish", "puffer", 24.5, 202, 24.5)
+        # Hold the subject in sight of its threat. A free-swimming puffer can
+        # leave the fear radius before it finishes inflating, producing a
+        # stochastic false failure even on the official Java server.
+        self.summon(
+            "pufferfish", "puffer", 24.5, 202, 24.5,
+            'NoGravity:1b,attributes:[{id:"minecraft:movement_speed",base:0.0d}]',
+        )
         self.summon("axolotl", "threat", 25.5, 202, 24.5, "NoAI:1b,NoGravity:1b")
-        self.wait(3.0)
+        self.wait(4.0)
         observed = self.nbt("puffer")
         self.require(self.number(observed, "PuffState") == 2, "puffer did not fully inflate: " + observed)
         self.command("kill @e[tag=threat]")
@@ -473,6 +479,60 @@ class EntityQualification:
             self.require(5700 < self.number(result, "Age") <= 6000 and self.number(result, "InLove") == 0,
                          "parent did not enter its age-based breeding cooldown: " + result)
 
+    def rabbit_hops(self) -> None:
+        self.command("gamemode creative AIBot")
+        self.command("tp AIBot 44.5 202 44.5")
+        self.command("fill 33 199 33 46 199 46 grass_block")
+        self.command("fill 33 200 33 46 205 46 air")
+        self.summon("rabbit", "hopper", 35.5, 200, 40.5, "RabbitType:99")
+        self.summon("wolf", "prey", 42.5, 200, 40.5, "NoAI:1b")
+        start = parse_position(self.nbt("hopper"))
+        self.require(start is not None, "rabbit did not spawn")
+        assert start is not None
+        displaced = 0.0
+        max_height = start[1]
+        end = self.game_time() + 400
+        while self.game_time() < end and (displaced < 1.5 or max_height < 200.16):
+            self.wait(0.15)
+            current = parse_position(self.nbt("hopper"))
+            self.require(current is not None, "rabbit disappeared while pursuing wolf")
+            assert current is not None
+            displaced = max(displaced, math.dist((start[0], start[2]), (current[0], current[2])))
+            max_height = max(max_height, current[1])
+        self.require(displaced >= 1.5 and max_height >= 200.16,
+                     f"rabbit never pursued with hops: distance={displaced}, height={max_height}")
+
+    def rabbit_carrots(self) -> None:
+        self.command("gamerule mob_griefing true")
+        self.command("gamemode creative AIBot")
+        self.command("tp AIBot 44.5 202 44.5")
+        self.command("fill 33 199 33 46 199 46 grass_block")
+        self.command("fill 33 200 33 46 205 46 air")
+        # A crop plot keeps the raid opportunity close while the garden goal
+        # waits for its randomized vanilla next-start delay.
+        self.command("fill 36 199 37 42 199 43 farmland[moisture=7]")
+        self.command("fill 36 200 37 42 200 43 carrots[age=7]")
+        self.command("setblock 39 199 36 water")
+        for x, z in ((34, 0), (44, 0)):
+            self.command(f"fill {x} 200 35 {x} 202 45 glass")
+        for z in (35, 45):
+            self.command(f"fill 34 200 {z} 44 202 {z} glass")
+        self.summon("rabbit", "raider", 39.5, 200, 40.5, "MoreCarrotTicks:0")
+        end = self.game_time() + 800
+        changed = False
+        crop_positions = [(x, z) for x in range(36, 43) for z in range(37, 44)]
+        while self.game_time() < end and not changed:
+            self.wait(2.0)
+            for x, z in crop_positions:
+                result = self.command(
+                    f"execute unless block {x} 200 {z} carrots[age=7] "
+                    "run data get entity @e[tag=raider,limit=1]"
+                )
+                if "Health" in result:
+                    changed = True
+                    break
+        self.require(changed, "rabbit did not reduce any mature carrot crop within 800 ticks")
+
     def run(self) -> int:
         if self.run_dir.exists():
             raise QualificationError("--run-dir must be new")
@@ -537,6 +597,8 @@ class EntityQualification:
                             self.case("ageable_growth_" + name, lambda name=name: self.ageable_growth(name, False))
                         self.case("ageable_locked_" + name, lambda name=name: self.ageable_growth(name, True))
                 self.case("cow_breeding_and_parent_cooldowns", self.cow_breeding)
+                self.case("rabbit_hops_under_pursuit", self.rabbit_hops)
+                self.case("rabbit_eats_mature_carrots", self.rabbit_carrots)
         except (OSError, ValueError, QualificationError) as error:
             self.observations.append(Observation("harness_prerequisite", False, str(error)))
         finally:

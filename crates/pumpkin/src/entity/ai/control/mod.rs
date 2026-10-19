@@ -7,6 +7,7 @@ pub mod flying_move_control;
 pub mod jump_control;
 pub mod look_control;
 pub mod move_control;
+pub mod rabbit_move_control;
 pub mod smooth_swimming_look_control;
 pub mod smooth_swimming_move_control;
 
@@ -44,7 +45,9 @@ pub fn movement_controller(kind: &pumpkin_data::entity::EntityType) -> Box<dyn M
     use flying_move_control::FlyingMoveControl;
     use pumpkin_data::entity::EntityType as E;
     use smooth_swimming_move_control::SmoothSwimmingMoveControl;
-    if [&E::COD, &E::SALMON, &E::TROPICAL_FISH, &E::PUFFERFISH].contains(&kind) {
+    if kind == &E::RABBIT {
+        Box::new(rabbit_move_control::RabbitMoveControl::default())
+    } else if [&E::COD, &E::SALMON, &E::TROPICAL_FISH, &E::PUFFERFISH].contains(&kind) {
         Box::new(FishMoveControl::default())
     } else if [&E::GUARDIAN, &E::ELDER_GUARDIAN].contains(&kind) {
         Box::new(GuardianMoveControl::default())

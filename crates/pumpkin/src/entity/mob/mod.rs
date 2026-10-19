@@ -803,6 +803,15 @@ impl MobEntity {
 }
 
 pub trait Mob: EntityBase + Send + Sync {
+    fn request_jump(&self) {
+        self.get_mob_entity()
+            .living_entity
+            .jumping
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    fn tick_jump_control(&self) {}
+
     fn get_mob_jump_multiplier(&self) -> f64 {
         1.0
     }
@@ -1212,6 +1221,15 @@ pub trait Mob: EntityBase + Send + Sync {
         Some(baby)
     }
 
+    /// The mate influences inheritable variants such as the rabbit coat.
+    fn create_breed_offspring_with_partner(
+        &self,
+        world: &Arc<World>,
+        _partner: &dyn Mob,
+    ) -> Option<Arc<dyn EntityBase>> {
+        self.create_breed_offspring(world)
+    }
+
     fn mob_read_nbt(&self, _nbt: &NbtCompound) {}
 
     /// Drops a target the mob is not allowed to attack, such as a creative player.
@@ -1564,6 +1582,7 @@ impl<T: Mob + Send + 'static> EntityBase for T {
                     .unwrap_or_else(std::sync::PoisonError::into_inner);
                 controller.tick(self);
             }
+            self.tick_jump_control();
         } else {
             // Goal stop hooks release navigation and resources such as chest viewers.
             for selector in [&mob_entity.goals_selector, &mob_entity.target_selector] {

@@ -98,6 +98,27 @@ checks and clean shutdown. The official Java reference passed the original
 111-check suite and the separate three-probe movement suite with clean shutdown.
 These results qualify the listed scenarios, not every behavior of each entity.
 
+### 2026-10-19 entity continuation
+
+The official Java 26.3 server reference has been checked for aging and age-lock
+transitions, cow breeding and parent cooldown, rabbit jumping, and mature-carrot
+raiding. The expanded 181-case Java reference run passed 180 scenarios. One
+free-swimming pufferfish left its threat radius before fully inflating; the
+corrected restrained pufferfish fixture passed. Rabbit pursuit and the revised
+bounded-garden carrot-raiding fixtures also passed against vanilla.
+Compact reports are in tools/ironore/reports, preserving failing fixture
+observations rather than silently counting them as passes.
+
+This branch adds rabbit hopping, carrot raiding, variants and coat inheritance;
+fixes age ticking for cow, pig, sheep, wolf and chicken; sets vanilla-style
+breeding parent ages; applies the ageable feeding API; and fixes Java 26.3
+interaction packets so the correct hand is used.
+
+The Rust cargo-check gate passed with a larger compiler stack and one Cargo
+job. This is a source/type check, not proof that the newly changed executable
+passed live Pumpkin behavior tests. Full entity-by-entity vanilla AI parity
+is still not established.
+
 This branch does not yet establish 100% entity AI parity and does not change
 Ironore's supported backend pin.
 
@@ -172,7 +193,7 @@ dimensions refer to shared clock IDs; this fork repairs persistence within
 Pumpkin's existing architecture. The block command additions use Pumpkin's
 existing block-entity serializers; unimplemented block-entity behavior and data
 fields remain outside their scope. The Java reference declares world DataVersion
-5023 while Pumpkin uses 4903, so vanilla world migration and full save compatibility
-remain unqualified. Native client, survival, cross-dimension, and Bedrock
+5023, now also written by this branch, but vanilla world migration and full
+cross-server save compatibility remain unqualified. Native client, survival, cross-dimension, and Bedrock
 acceptance are not established by the minimal Java protocol harness. Other
 gameplay gaps remain tracked upstream.

@@ -98,7 +98,18 @@ impl JavaClient {
                                     return;
                                 }
                             }
-                            let mut stack = player.inventory().held_item();
+                            // Java sends which hand performed the interaction.
+                            // Feeding, taming, saddling and bucket capture must consume
+                            // the selected hand, not always the main-hand slot.
+                            let hand = match interact.hand.map_or(0, |h| h.0) {
+                                0 => pumpkin_util::Hand::Right,
+                                1 => pumpkin_util::Hand::Left,
+                                _ => {
+                                    self.try_kick(&TextComponent::text("Invalid interaction hand"));
+                                    return;
+                                }
+                            };
+                            let mut stack = player.inventory().get_stack_in_hand(hand);
 
                             let item_id = stack.item.id;
                             let before = stack.clone();
@@ -118,12 +129,16 @@ impl JavaClient {
                                     );
                                     player.world().send_entity_status(
                                         player.get_entity(),
-                                        equipment_break_status(&EquipmentSlot::MAIN_HAND),
+                                        equipment_break_status(if hand == pumpkin_util::Hand::Left {
+                                            &EquipmentSlot::OFF_HAND
+                                        } else {
+                                            &EquipmentSlot::MAIN_HAND
+                                        }),
                                         None,
                                     );
                                 }
                             }
-                            player.inventory().set_held_item(stack);
+                            player.inventory().set_stack_in_hand(hand, stack);
                         }
                     }
                 }

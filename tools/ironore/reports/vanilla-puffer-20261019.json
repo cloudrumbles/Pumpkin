@@ -1,0 +1,25 @@
+{
+  "backend": "vanilla",
+  "target_version": "26.3",
+  "expected_data_version": 5023,
+  "vanilla_jar_sha1": "33680f5f2ac32864d6d7cf5e56a705fdb3e05f4c",
+  "observations": [
+    {
+      "name": "pufferfish_inflate_and_deflate",
+      "passed": true,
+      "detail": "observed expected behavior"
+    },
+    {
+      "name": "clean_server_stop",
+      "passed": true,
+      "detail": "exit code 0"
+    }
+  ],
+  "source_report_sha256": "7cea96996473c7719949229980467772193daeb79ea78801aa101b7e19e617d4",
+  "source_report_command_count": 109,
+  "qualifications": {
+    "pass": 2,
+    "fail": 0
+  },
+  "scope_note": "scenario coverage only, not complete mob parity"
+}

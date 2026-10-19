@@ -1,0 +1,25 @@
+{
+  "backend": "vanilla",
+  "target_version": "26.3",
+  "expected_data_version": 5023,
+  "vanilla_jar_sha1": "33680f5f2ac32864d6d7cf5e56a705fdb3e05f4c",
+  "observations": [
+    {
+      "name": "rabbit_eats_mature_carrots",
+      "passed": true,
+      "detail": "observed expected behavior"
+    },
+    {
+      "name": "clean_server_stop",
+      "passed": true,
+      "detail": "exit code 0"
+    }
+  ],
+  "source_report_sha256": "976c639f4f4561056c9e060e923309a4cafa825e96ff67cceb2ca54af96cba4c",
+  "source_report_command_count": 84,
+  "qualifications": {
+    "pass": 2,
+    "fail": 0
+  },
+  "scope_note": "scenario coverage only, not complete mob parity"
+}

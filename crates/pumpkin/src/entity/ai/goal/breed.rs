@@ -97,9 +97,23 @@ impl BreedGoal {
         mate.reset_love();
         mate.set_breeding_cooldown(6000);
 
+        // Vanilla uses Age=6000 as the parent cooldown, which is also saved
+        // and counts down on each ageable tick. The separate internal
+        // cooldown stays in sync for callers not implementing AgeableMob.
+        if let Some(ageable) = mob.as_ageable() {
+            ageable.set_age(6000);
+        }
+        if let Some(ageable) = mate.get_mob().and_then(Mob::as_ageable) {
+            ageable.set_age(6000);
+        }
+
         let parent_pos = entity.pos.load();
         let world_full = entity.world.load_full();
-        if let Some(baby) = mob.create_breed_offspring(&world_full) {
+        let offspring = mate.get_mob().map_or_else(
+            || mob.create_breed_offspring(&world_full),
+            |partner| mob.create_breed_offspring_with_partner(&world_full, partner),
+        );
+        if let Some(baby) = offspring {
             world_full.spawn_entity(baby);
         }
 

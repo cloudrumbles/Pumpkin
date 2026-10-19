@@ -112,6 +112,10 @@ impl Mob for PigEntity {
         }
     }
 
+    fn mob_tick(&self, _caller: &dyn EntityBase) {
+        self.ageable_ai_step();
+    }
+
     fn get_mob_entity(&self) -> &MobEntity {
         &self.mob_entity
     }
