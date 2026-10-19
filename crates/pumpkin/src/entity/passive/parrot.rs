@@ -14,6 +14,7 @@ use pumpkin_protocol::codec::var_int::VarInt;
 
 use crate::entity::{
     Entity, EntityBase,
+    ageable::{AgeableData, AgeableMob},
     ai::goal::{
         escape_danger::EscapeDangerGoal, follow_mob::FollowMobGoal, follow_owner::FollowOwnerGoal,
         look_around::RandomLookAroundGoal, look_at_entity::LookAtEntityGoal,
@@ -39,6 +40,7 @@ const COOKIE_POISON_DURATION: i32 = 900;
 pub struct ParrotEntity {
     pub mob_entity: MobEntity,
     tamable_data: TamableData,
+    ageable_data: AgeableData,
     variant: AtomicI32,
 }
 
@@ -52,6 +54,7 @@ impl ParrotEntity {
         let parrot = Self {
             mob_entity,
             tamable_data: TamableData::default(),
+            ageable_data: AgeableData::default(),
             variant: AtomicI32::new(rand::random_range(0..5)),
         };
         let mob_arc = Arc::new(parrot);
@@ -114,6 +117,18 @@ impl ParrotEntity {
     }
 }
 
+impl AgeableMob for ParrotEntity {
+    fn can_be_a_baby(&self) -> bool {
+        // These species extend AgeableMob in Java 26.3, but do not persist
+        // Age/ForcedAge/AgeLocked and reject baby age from summon NBT.
+        false
+    }
+
+    fn get_ageable_data(&self) -> &AgeableData {
+        &self.ageable_data
+    }
+}
+
 impl Animal for ParrotEntity {
     fn is_food(&self, _stack: &ItemStack) -> bool {
         false
@@ -126,9 +141,29 @@ impl TamableAnimal for ParrotEntity {
 }
 
 impl Mob for ParrotEntity {
+    fn as_ageable(&self) -> Option<&dyn AgeableMob> {
+        Some(self)
+    }
+
+    fn as_animal(&self) -> Option<&dyn Animal> {
+        Some(self)
+    }
+
     fn as_tamable(&self) -> Option<&dyn TamableAnimal> {
         Some(self)
     }
+    fn create_breed_offspring(
+        &self,
+        _world: &Arc<crate::world::World>,
+    ) -> Option<Arc<dyn EntityBase>> {
+        // Java 26.3 Parrot.getBreedOffspring explicitly returns null.
+        None
+    }
+
+    fn mob_tick(&self, _caller: &dyn EntityBase) {
+        self.ageable_ai_step();
+    }
+
     fn requires_custom_persistence(&self) -> bool {
         self.is_tame()
     }
@@ -220,7 +255,12 @@ impl Mob for ParrotEntity {
         );
     }
     fn mob_init_data_tracker(&self) {
-        self.get_entity().set_synced_data(
+        let entity = self.get_entity();
+        entity.set_synced_data(
+            pumpkin_data::tracked_data::parrot::DATA_BABY_ID,
+            entity.age.load(Ordering::Relaxed) < 0,
+        );
+        entity.set_synced_data(
             pumpkin_data::tracked_data::parrot::DATA_VARIANT_ID,
             VarInt(self.variant.load(Ordering::Relaxed)),
         );

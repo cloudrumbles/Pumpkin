@@ -457,6 +457,20 @@ class EntityQualification:
             self.require(bool(locks) and locks[-1] is True,
                          f"{kind} age-lock metadata was not sent: {locks}")
 
+    def rejects_baby_age(self, kind: str) -> None:
+        self.summon(
+            kind, "unsupported_baby", 38.5, 202.0, 40.5,
+            "Age:-12,AgeLocked:1b,NoAI:1b,NoGravity:1b,Invulnerable:1b",
+        )
+        self.wait(0.75)
+        result = self.nbt("unsupported_baby")
+        self.require("Health" in result, f"{kind} disappeared: {result}")
+        self.require(
+            re.search(r"(?<![\w])Age:\s*-?\d+", result) is None
+            and "AgeLocked:" not in result,
+            f"{kind} should not persist unsupported baby age: {result}",
+        )
+
     def cow_breeding(self) -> None:
         self.command("gamemode creative AIBot")
         self.command("tp AIBot 44.5 202 44.5")
@@ -596,6 +610,8 @@ class EntityQualification:
                         if name not in {"skeleton_horse", "zombie_horse"}:
                             self.case("ageable_growth_" + name, lambda name=name: self.ageable_growth(name, False))
                         self.case("ageable_locked_" + name, lambda name=name: self.ageable_growth(name, True))
+                for name in ("slime", "magma_cube", "parrot"):
+                    self.case("rejects_baby_age_" + name, lambda name=name: self.rejects_baby_age(name))
                 self.case("cow_breeding_and_parent_cooldowns", self.cow_breeding)
                 self.case("rabbit_hops_under_pursuit", self.rabbit_hops)
                 self.case("rabbit_eats_mature_carrots", self.rabbit_carrots)

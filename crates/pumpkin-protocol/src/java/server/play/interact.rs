@@ -211,6 +211,27 @@ mod tests {
     }
 
     #[test]
+    fn java_26_3_zero_hit_position_preserves_secondary_action() {
+        let mut bytes = Vec::new();
+        SInteract {
+            entity_id: VarInt(77),
+            r#type: VarInt(2),
+            target_position: Some(Vector3::new(0.0, 0.0, 0.0)),
+            hand: Some(VarInt(0)),
+            sneaking: true,
+        }
+        .write_packet_data(&mut bytes, &JavaMinecraftVersion::V_26_3)
+        .expect("encode");
+        // Entity ID, hand ID, one-byte zero hit location, boolean.
+        assert_eq!(bytes, [77, 0, 0, 1]);
+        let mut data = bytes.as_slice();
+        let decoded = SInteract::read(&mut data, &JavaMinecraftVersion::V_26_3).expect("decode");
+        assert!(data.is_empty());
+        assert!(decoded.sneaking);
+        assert_eq!(decoded.target_position, Some(Vector3::new(0.0, 0.0, 0.0)));
+    }
+
+    #[test]
     fn java_26_3_rejects_invalid_interaction_hand() {
         let mut bytes = Vec::new();
         SInteract {

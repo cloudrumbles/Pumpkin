@@ -1,0 +1,31 @@
+{
+  "backend": "vanilla",
+  "target_version": "26.3",
+  "expected_data_version": 5023,
+  "vanilla_jar_sha1": "33680f5f2ac32864d6d7cf5e56a705fdb3e05f4c",
+  "observations": [
+    {
+      "name": "rejects_baby_age_slime",
+      "passed": true,
+      "detail": "observed expected behavior"
+    },
+    {
+      "name": "rejects_baby_age_magma_cube",
+      "passed": true,
+      "detail": "observed expected behavior"
+    },
+    {
+      "name": "rejects_baby_age_parrot",
+      "passed": true,
+      "detail": "observed expected behavior"
+    },
+    {
+      "name": "clean_server_stop",
+      "passed": true,
+      "detail": "exit code 0"
+    }
+  ],
+  "source_report_sha256": "d45ff87925efa63d416b188b7ec96599e6c5cebcb08c3cff390be5e76de4fc5c",
+  "source_command_count": 79,
+  "scope_note": "slime, magma cube and parrot ignore unsupported baby-age NBT, verified against official Java 26.3"
+}

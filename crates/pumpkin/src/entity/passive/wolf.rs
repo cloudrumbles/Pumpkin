@@ -15,12 +15,13 @@ use crate::entity::{
     Entity, EntityBase,
     ageable::AgeableMob,
     ai::goal::{
-        active_target::ActiveTargetGoal, avoid_entity::AvoidEntityGoal, beg::BegGoal,
-        breed::BreedGoal, escape_danger::EscapeDangerGoal, follow_owner::FollowOwnerGoal,
-        follow_parent::FollowParentGoal, look_around::RandomLookAroundGoal,
-        look_at_entity::LookAtEntityGoal, melee_attack::MeleeAttackGoal,
-        owner_hurt_by_target::OwnerHurtByTargetGoal, owner_hurt_target::OwnerHurtTargetGoal,
-        revenge::RevengeGoal, swim::SwimGoal, wander_around::WanderAroundGoal,
+        ConditionalGoal, active_target::ActiveTargetGoal, avoid_entity::AvoidEntityGoal,
+        beg::BegGoal, breed::BreedGoal, escape_danger::EscapeDangerGoal,
+        follow_owner::FollowOwnerGoal, follow_parent::FollowParentGoal,
+        look_around::RandomLookAroundGoal, look_at_entity::LookAtEntityGoal,
+        melee_attack::MeleeAttackGoal, owner_hurt_by_target::OwnerHurtByTargetGoal,
+        owner_hurt_target::OwnerHurtTargetGoal, revenge::RevengeGoal, swim::SwimGoal,
+        wander_around::WanderAroundGoal,
     },
     mob::{Mob, MobEntity},
     passive::{
@@ -109,15 +110,24 @@ impl WolfEntity {
             // 5: NonTameRandomTarget (Sheep, Rabbit, Fox)
             target_selector.add_goal(
                 5,
-                ActiveTargetGoal::with_default(&mob_arc.mob_entity, &EntityType::SHEEP, false),
+                ConditionalGoal::new(
+                    ActiveTargetGoal::with_default(&mob_arc.mob_entity, &EntityType::SHEEP, false),
+                    |mob| !mob.is_tamed(),
+                ),
             );
             target_selector.add_goal(
                 5,
-                ActiveTargetGoal::with_default(&mob_arc.mob_entity, &EntityType::RABBIT, false),
+                ConditionalGoal::new(
+                    ActiveTargetGoal::with_default(&mob_arc.mob_entity, &EntityType::RABBIT, false),
+                    |mob| !mob.is_tamed(),
+                ),
             );
             target_selector.add_goal(
                 5,
-                ActiveTargetGoal::with_default(&mob_arc.mob_entity, &EntityType::FOX, false),
+                ConditionalGoal::new(
+                    ActiveTargetGoal::with_default(&mob_arc.mob_entity, &EntityType::FOX, false),
+                    |mob| !mob.is_tamed(),
+                ),
             );
             // 7: NearestAttackableTarget (Skeleton)
             target_selector.add_goal(

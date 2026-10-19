@@ -114,10 +114,31 @@ fixes age ticking for cow, pig, sheep, wolf and chicken; sets vanilla-style
 breeding parent ages; applies the ageable feeding API; and fixes Java 26.3
 interaction packets so the correct hand is used.
 
-The Rust cargo-check gate passed with a larger compiler stack and one Cargo
-job. This is a source/type check, not proof that the newly changed executable
-passed live Pumpkin behavior tests. Full entity-by-entity vanilla AI parity
-is still not established.
+The earlier Rust cargo-check gate passed with a larger compiler stack and
+one Cargo job. A later source and test-compilation gate checks the subsequent
+changes. Those are type/compile checks, not proof that the newly changed
+executable has passed live Pumpkin behavior tests.
+
+A further 26.3 Java protocol correction handles the one-byte encoding of a
+zero LP Vec3 in the serverbound entity-interact packet without consuming the
+next sneaking flag. Positive and malformed-value codec regressions cover it.
+The rabbit crop-break event uses the correct 2001 block-break event.
+
+The extended audit also found missing ageable state in cats, villagers,
+hoglins and parrots. The parrot and the slime/magma-cube family *inherit*
+AgeableMob in Java but specifically reject baby ages. This was confirmed by
+all four official-reference negative cases recorded in
+tools/ironore/reports/vanilla-no-baby-20261019.json. Slime and magma-cube
+size metadata/persistence are being repaired; magma cubes now retain their
+entity implementation and species attributes when splitting, rather than
+creating bare SlimeEntity wrappers. Wolf and cat wild-prey hunting is gated
+off when tamed, and a cat's kitten inherits its parents' coat and owner's
+tame state. Mixed collar dyes still need recipe-level parity.
+
+**Coverage is not complete:** active brain goals, species interactions,
+navigation edge cases, deterministic differences, saved state and live
+Pumpkin replay must be qualified for every one of the 90 mobs before claiming
+100% vanilla AI parity.
 
 This branch does not yet establish 100% entity AI parity and does not change
 Ironore's supported backend pin.

@@ -150,7 +150,7 @@ impl Goal for RabbitRaidGoal {
                         Some(entity),
                     );
                     world.sync_world_event(
-                        WorldEvent::ParticlesDestroyBlock,
+                        WorldEvent::ParticlesAndSoundDestroyBlock,
                         crop_pos,
                         i32::from(state.as_u16()),
                     );
