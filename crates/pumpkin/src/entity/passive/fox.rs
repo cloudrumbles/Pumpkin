@@ -1,23 +1,36 @@
 use std::sync::{
-    Arc, Weak,
+    Arc, Mutex, Weak,
     atomic::{AtomicI32, AtomicU8, Ordering},
 };
 
+use crate::world::World;
 use pumpkin_data::entity::EntityType;
 use pumpkin_data::item::Item;
 use pumpkin_data::item_stack::ItemStack;
 use pumpkin_data::sound::Sound;
 use pumpkin_data::tag::{self, Taggable};
-use pumpkin_nbt::compound::NbtCompound;
+use pumpkin_nbt::{compound::NbtCompound, tag::NbtTag};
 use pumpkin_protocol::codec::var_int::VarInt;
+use uuid::Uuid;
 
 use crate::entity::{
     Entity, EntityBase,
     ageable::{AgeableData, AgeableMob},
     ai::goal::{
-        breed::BreedGoal, escape_danger::EscapeDangerGoal, follow_parent::FollowParentGoal,
-        look_around::RandomLookAroundGoal, look_at_entity::LookAtEntityGoal, swim::SwimGoal,
-        tempt::TemptGoal, wander_around::WanderAroundGoal,
+        avoid_entity::AvoidEntityGoal,
+        breed::BreedGoal,
+        escape_danger::EscapeDangerGoal,
+        follow_parent::FollowParentGoal,
+        fox_behavior::{
+            FoxDefendTrustedGoal, FoxEatBerriesGoal, FoxHuntTargetGoal, FoxPounceGoal,
+            FoxSleepGoal, FoxStalkGoal,
+        },
+        look_around::RandomLookAroundGoal,
+        look_at_entity::LookAtEntityGoal,
+        ocelot_attack::OcelotAttackGoal,
+        swim::SwimGoal,
+        tempt::TemptGoal,
+        wander_around::WanderAroundGoal,
     },
     mob::{Mob, MobEntity},
     passive::animal::Animal,
@@ -73,6 +86,7 @@ pub struct FoxEntity {
     pub ageable_data: AgeableData,
     pub variant: AtomicI32,
     pub flags: AtomicU8,
+    pub trusted: Mutex<Vec<Uuid>>,
 }
 
 impl FoxEntity {
@@ -83,6 +97,7 @@ impl FoxEntity {
             ageable_data: AgeableData::default(),
             variant: AtomicI32::new(FoxVariant::Red.id()),
             flags: AtomicU8::new(0),
+            trusted: Mutex::new(Vec::new()),
         };
         let mob_arc = Arc::new(fox);
         let mob_weak: Weak<dyn Mob> = {
@@ -98,6 +113,30 @@ impl FoxEntity {
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
 
             goal_selector.add_goal(0, Box::new(SwimGoal::default()));
+            goal_selector.add_goal(
+                4,
+                Box::new(AvoidEntityGoal::with_filter(
+                    16.0,
+                    1.6,
+                    1.4,
+                    |mob, other| {
+                        let Some(fox) = mob.cast_any().downcast_ref::<FoxEntity>() else {
+                            return false;
+                        };
+                        other.get_entity().entity_type == &EntityType::PLAYER
+                            && !fox.trusts(other.get_entity().entity_uuid)
+                    },
+                )),
+            );
+            goal_selector.add_goal(
+                4,
+                Box::new(AvoidEntityGoal::new(&EntityType::WOLF, 8.0, 1.6, 1.4)),
+            );
+            goal_selector.add_goal(6, Box::new(FoxStalkGoal));
+            goal_selector.add_goal(5, Box::new(FoxPounceGoal::new()));
+            goal_selector.add_goal(7, Box::new(OcelotAttackGoal::new()));
+            goal_selector.add_goal(7, Box::new(FoxSleepGoal));
+            goal_selector.add_goal(10, Box::new(FoxEatBerriesGoal::new()));
             goal_selector.add_goal(1, EscapeDangerGoal::new(1.5));
             goal_selector.add_goal(2, BreedGoal::new(1.0));
             goal_selector.add_goal(3, Box::new(TemptGoal::new(1.2, FOX_FOOD, false)));
@@ -108,6 +147,13 @@ impl FoxEntity {
                 LookAtEntityGoal::with_default(mob_weak, &EntityType::PLAYER, 6.0),
             );
             goal_selector.add_goal(8, Box::new(RandomLookAroundGoal::default()));
+            let mut target_selector = mob_arc
+                .mob_entity
+                .target_selector
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            target_selector.add_goal(4, Box::new(FoxHuntTargetGoal::new()));
+            target_selector.add_goal(3, Box::new(FoxDefendTrustedGoal::new()));
         };
 
         mob_arc
@@ -206,6 +252,23 @@ impl FoxEntity {
         self.set_flag(128, val);
     }
 
+    pub fn trusts(&self, uuid: Uuid) -> bool {
+        self.trusted
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .contains(&uuid)
+    }
+
+    pub fn add_trusted(&self, uuid: Uuid) {
+        let mut trusted = self
+            .trusted
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if !trusted.contains(&uuid) && trusted.len() < 2 {
+            trusted.push(uuid);
+        }
+    }
+
     pub fn clear_states(&self) {
         self.set_interested(false);
         self.set_crouching(false);
@@ -230,6 +293,30 @@ impl Animal for FoxEntity {
 }
 
 impl Mob for FoxEntity {
+    fn create_breed_offspring_with_partner(
+        &self,
+        world: &Arc<World>,
+        partner: &dyn Mob,
+    ) -> Option<Arc<dyn EntityBase>> {
+        let baby = self.create_breed_offspring(world)?;
+        if let Some(child) = baby.cast_any().downcast_ref::<FoxEntity>() {
+            let other = partner.cast_any().downcast_ref::<FoxEntity>();
+            let variant = if rand::random::<bool>() {
+                self.get_variant()
+            } else {
+                other.map_or(self.get_variant(), FoxEntity::get_variant)
+            };
+            child.set_variant(variant);
+            if let Some(breeder) = self.mob_entity.breeder.load() {
+                child.add_trusted(breeder);
+            }
+            if let Some(breeder) = other.and_then(|p| p.mob_entity.breeder.load()) {
+                child.add_trusted(breeder);
+            }
+        }
+        Some(baby)
+    }
+
     fn as_ageable(&self) -> Option<&dyn AgeableMob> {
         Some(self)
     }
@@ -239,13 +326,31 @@ impl Mob for FoxEntity {
     }
 
     fn mob_write_nbt(&self, nbt: &mut NbtCompound) {
+        self.write_ageable_nbt(nbt);
         nbt.put_string("Type", self.get_variant().as_str().to_string());
         nbt.put_bool("Sleeping", self.is_sleeping());
         nbt.put_bool("Sitting", self.is_sitting());
         nbt.put_bool("Crouching", self.is_crouching());
+        let list = self
+            .trusted
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .iter()
+            .map(|id| {
+                let (hi, lo) = id.as_u64_pair();
+                NbtTag::IntArray(vec![
+                    (hi >> 32) as i32,
+                    hi as i32,
+                    (lo >> 32) as i32,
+                    lo as i32,
+                ])
+            })
+            .collect();
+        nbt.put("Trusted", NbtTag::List(list));
     }
 
     fn mob_read_nbt(&self, nbt: &NbtCompound) {
+        self.read_ageable_nbt(nbt);
         if let Some(variant_str) = nbt.get_string("Type") {
             self.set_variant(FoxVariant::from_name(variant_str));
         }
@@ -257,6 +362,28 @@ impl Mob for FoxEntity {
         }
         if let Some(crouching) = nbt.get_bool("Crouching") {
             self.set_crouching(crouching);
+        }
+        if let Some(list) = nbt.get_list("Trusted") {
+            let mut trusted = self
+                .trusted
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            trusted.clear();
+            for tag in list {
+                if let NbtTag::IntArray(values) = tag
+                    && values.len() == 4
+                {
+                    let uuid = Uuid::from_u128(
+                        (values[0] as u32 as u128) << 96
+                            | (values[1] as u32 as u128) << 64
+                            | (values[2] as u32 as u128) << 32
+                            | values[3] as u32 as u128,
+                    );
+                    if !trusted.contains(&uuid) && trusted.len() < 2 {
+                        trusted.push(uuid);
+                    }
+                }
+            }
         }
     }
 

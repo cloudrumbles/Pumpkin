@@ -16,14 +16,25 @@ use crate::entity::{
     Entity, EntityBase,
     ageable::{AgeableData, AgeableMob},
     ai::goal::{
-        breed::BreedGoal, escape_danger::EscapeDangerGoal, follow_parent::FollowParentGoal,
-        look_around::RandomLookAroundGoal, look_at_entity::LookAtEntityGoal, swim::SwimGoal,
-        tempt::TemptGoal, wander_around::WanderAroundGoal,
+        ConditionalGoal,
+        avoid_entity::AvoidEntityGoal,
+        breed::BreedGoal,
+        escape_danger::EscapeDangerGoal,
+        follow_parent::FollowParentGoal,
+        look_around::RandomLookAroundGoal,
+        look_at_entity::LookAtEntityGoal,
+        melee_attack::MeleeAttackGoal,
+        panda_behavior::{self, PandaLieBackGoal, PandaRollGoal, PandaSitGoal, PandaSneezeGoal},
+        revenge::RevengeGoal,
+        swim::SwimGoal,
+        tempt::TemptGoal,
+        wander_around::WanderAroundGoal,
     },
     mob::{Mob, MobEntity},
     passive::animal::Animal,
     player::Player,
 };
+use crate::world::World;
 
 const TEMPT_ITEMS: &[&Item] = &[&Item::BAMBOO];
 
@@ -112,6 +123,8 @@ pub struct PandaEntity {
     pub eat_counter: AtomicI32,
     pub sneeze_counter: AtomicI32,
     pub unhappy_counter: AtomicI32,
+    pub unhappy_cooldown: AtomicI32,
+    pub roll_counter: AtomicI32,
 }
 
 impl PandaEntity {
@@ -128,6 +141,8 @@ impl PandaEntity {
             eat_counter: AtomicI32::new(0),
             sneeze_counter: AtomicI32::new(0),
             unhappy_counter: AtomicI32::new(0),
+            unhappy_cooldown: AtomicI32::new(0),
+            roll_counter: AtomicI32::new(0),
         };
         let mob_arc = Arc::new(panda);
         let mob_weak: Weak<dyn Mob> = {
@@ -143,8 +158,34 @@ impl PandaEntity {
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
 
             goal_selector.add_goal(0, Box::new(SwimGoal::default()));
-            goal_selector.add_goal(1, EscapeDangerGoal::new(2.0));
-            goal_selector.add_goal(2, BreedGoal::new(1.0));
+            goal_selector.add_goal(2, EscapeDangerGoal::new(2.0));
+            goal_selector.add_goal(
+                3,
+                ConditionalGoal::new(
+                    Box::new(
+                        MeleeAttackGoal::new(1.2, true)
+                            .with_attack_handler(panda_behavior::panda_attack_handler),
+                    ),
+                    panda_behavior::can_act,
+                ),
+            );
+            goal_selector.add_goal(
+                6,
+                Box::new(AvoidEntityGoal::with_filter(
+                    8.0,
+                    2.0,
+                    2.0,
+                    panda_behavior::avoid_worried,
+                )),
+            );
+            goal_selector.add_goal(7, Box::new(PandaSitGoal::new()));
+            goal_selector.add_goal(8, Box::new(PandaLieBackGoal::new()));
+            goal_selector.add_goal(8, Box::new(PandaSneezeGoal));
+            goal_selector.add_goal(12, Box::new(PandaRollGoal));
+            goal_selector.add_goal(
+                2,
+                ConditionalGoal::new(BreedGoal::new(1.0), panda_behavior::can_breed),
+            );
             goal_selector.add_goal(3, Box::new(TemptGoal::new(1.2, TEMPT_ITEMS, false)));
             goal_selector.add_goal(4, Box::new(FollowParentGoal::new(1.25)));
             goal_selector.add_goal(6, Box::new(WanderAroundGoal::new(1.0)));
@@ -152,10 +193,28 @@ impl PandaEntity {
                 7,
                 LookAtEntityGoal::with_default(mob_weak, &EntityType::PLAYER, 6.0),
             );
-            goal_selector.add_goal(8, Box::new(RandomLookAroundGoal::default()));
+            goal_selector.add_goal(10, Box::new(RandomLookAroundGoal::default()));
+            let mut target_selector = mob_arc
+                .mob_entity
+                .target_selector
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            target_selector.add_goal(1, Box::new(RevengeGoal::new(false)));
         };
 
         mob_arc
+    }
+
+    /// Weak and brown genes are recessive; the other traits are dominant.
+    #[must_use]
+    pub fn get_phenotype(&self) -> PandaGene {
+        let main = self.get_main_gene();
+        let hidden = self.get_hidden_gene();
+        if matches!(main, PandaGene::Weak | PandaGene::Brown) && main != hidden {
+            PandaGene::Normal
+        } else {
+            main
+        }
     }
 
     #[must_use]
@@ -254,6 +313,29 @@ impl Animal for PandaEntity {
 }
 
 impl Mob for PandaEntity {
+    fn create_breed_offspring_with_partner(
+        &self,
+        world: &Arc<World>,
+        partner: &dyn Mob,
+    ) -> Option<Arc<dyn EntityBase>> {
+        let baby = self.create_breed_offspring(world)?;
+        if let Some(child) = baby.cast_any().downcast_ref::<PandaEntity>() {
+            let other = partner.cast_any().downcast_ref::<PandaEntity>();
+            let choose = |p: &PandaEntity| {
+                if rand::random_range(0..32) == 0 {
+                    PandaGene::random_gene()
+                } else if rand::random::<bool>() {
+                    p.get_main_gene()
+                } else {
+                    p.get_hidden_gene()
+                }
+            };
+            child.set_main_gene(choose(self));
+            child.set_hidden_gene(choose(other.unwrap_or(self)));
+        }
+        Some(baby)
+    }
+
     fn as_ageable(&self) -> Option<&dyn AgeableMob> {
         Some(self)
     }
@@ -284,6 +366,87 @@ impl Mob for PandaEntity {
 
     fn mob_tick(&self, _caller: &dyn EntityBase) {
         self.ageable_ai_step();
+        let entity = self.get_entity();
+        if self.get_phenotype() == PandaGene::Worried
+            && entity.world.load().is_thundering()
+            && !entity.touching_water.load(Ordering::Relaxed)
+        {
+            self.set_sitting(true);
+        }
+        let unhappy = self.unhappy_counter.load(Ordering::Relaxed);
+        if unhappy > 0 {
+            self.unhappy_counter.store(unhappy - 1, Ordering::Relaxed);
+            entity.set_synced_data(
+                pumpkin_data::tracked_data::panda::UNHAPPY_COUNTER,
+                VarInt(unhappy - 1),
+            );
+            if unhappy == 30 || unhappy == 15 {
+                entity.play_sound(Sound::EntityPandaCantBreed);
+            }
+        }
+        if self.mob_entity.is_in_love() && unhappy == 0 && !panda_behavior::can_breed(self) {
+            self.unhappy_counter.store(32, Ordering::Relaxed);
+            entity.set_synced_data(
+                pumpkin_data::tracked_data::panda::UNHAPPY_COUNTER,
+                VarInt(32),
+            );
+        }
+        if self.is_sneezing() {
+            let count = self.sneeze_counter.fetch_add(1, Ordering::Relaxed) + 1;
+            entity.set_synced_data(
+                pumpkin_data::tracked_data::panda::SNEEZE_COUNTER,
+                VarInt(count),
+            );
+            if count == 1 {
+                entity.play_sound(Sound::EntityPandaPreSneeze);
+            }
+            if count > 20 {
+                self.set_sneezing(false);
+                self.sneeze_counter.store(0, Ordering::Relaxed);
+                entity.play_sound(Sound::EntityPandaSneeze);
+                // Nearby adult pandas can be startled by the sneeze.
+                for other in entity
+                    .world
+                    .load()
+                    .get_nearby_entities(entity.pos.load(), 10.0)
+                    .values()
+                {
+                    if other.get_entity().entity_type == &EntityType::PANDA
+                        && other.get_entity().entity_id != entity.entity_id
+                        && other.get_entity().on_ground.load(Ordering::Relaxed)
+                        && rand::random_range(0..2) == 0
+                    {
+                        other.get_entity().set_velocity(
+                            other.get_entity().velocity.load()
+                                + pumpkin_util::math::vector3::Vector3::new(0.0, 0.35, 0.0),
+                        );
+                    }
+                }
+            }
+        }
+        if self.is_rolling() {
+            let tick = self.roll_counter.fetch_add(1, Ordering::Relaxed) + 1;
+            if tick >= 32 || entity.horizontal_collision.load(Ordering::Relaxed) {
+                self.set_rolling(false);
+                self.roll_counter.store(0, Ordering::Relaxed);
+            } else if tick == 1 || tick == 9 || tick == 17 || tick == 25 {
+                let yaw = f64::from(entity.yaw.load()).to_radians();
+                entity.set_velocity(pumpkin_util::math::vector3::Vector3::new(
+                    -yaw.sin() * 0.3,
+                    0.27,
+                    yaw.cos() * 0.3,
+                ));
+            }
+        }
+        if self.is_sitting() {
+            let tick = self.eat_counter.fetch_add(1, Ordering::Relaxed) + 1;
+            entity.set_synced_data(pumpkin_data::tracked_data::panda::EAT_COUNTER, VarInt(tick));
+            if tick % 20 == 0 {
+                entity.play_sound(Sound::EntityPandaEat);
+            }
+        } else if self.eat_counter.swap(0, Ordering::Relaxed) != 0 {
+            entity.set_synced_data(pumpkin_data::tracked_data::panda::EAT_COUNTER, VarInt(0));
+        }
     }
 
     fn mob_init_data_tracker(&self) {
