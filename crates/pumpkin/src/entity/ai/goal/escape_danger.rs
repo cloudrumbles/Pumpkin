@@ -18,6 +18,7 @@ pub struct EscapeDangerGoal {
     goal_control: Controls,
     target: Option<Vector3<f64>>,
     running: bool,
+    panic_tag: fn(&dyn Mob) -> &'static pumpkin_data::tag::Tag,
 }
 
 impl EscapeDangerGoal {
@@ -28,7 +29,18 @@ impl EscapeDangerGoal {
             goal_control: Controls::MOVE,
             target: None,
             running: false,
+            panic_tag: |_| &tag::DamageType::MINECRAFT_PANIC_CAUSES,
         })
+    }
+
+    #[must_use]
+    pub fn with_tag_selector(
+        speed: f64,
+        panic_tag: fn(&dyn Mob) -> &'static pumpkin_data::tag::Tag,
+    ) -> Box<Self> {
+        let mut goal = Self::new(speed);
+        goal.panic_tag = panic_tag;
+        goal
     }
 
     #[must_use]
@@ -38,13 +50,11 @@ impl EscapeDangerGoal {
 
     /// Only `#minecraft:panic_causes` damage makes a mob flee, and only while the source is still
     /// remembered.
-    fn should_panic(mob: &dyn Mob) -> bool {
+    fn should_panic(&self, mob: &dyn Mob) -> bool {
         mob.get_mob_entity()
             .living_entity
             .get_last_damage_type()
-            .is_some_and(|damage_type| {
-                damage_type.has_tag(&tag::DamageType::MINECRAFT_PANIC_CAUSES)
-            })
+            .is_some_and(|damage_type| damage_type.has_tag((self.panic_tag)(mob)))
     }
 
     /// Nearest water within 5 blocks horizontally, only when the mob is not stuck in a block.
@@ -88,7 +98,7 @@ impl EscapeDangerGoal {
 
 impl Goal for EscapeDangerGoal {
     fn can_start(&mut self, mob: &dyn Mob) -> bool {
-        if !Self::should_panic(mob) {
+        if !self.should_panic(mob) {
             return false;
         }
 

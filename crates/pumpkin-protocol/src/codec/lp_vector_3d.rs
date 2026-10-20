@@ -59,14 +59,21 @@ impl LpVector3d {
     }
 
     pub fn read<R: std::io::Read>(reader: &mut R) -> Result<Self, ReadingError> {
-        let mut low_16 = [0u8; 2];
+        // Zero velocity/position is encoded by a *single* zero header byte.
+        // Do not read a second byte from the following field (for example the
+        // sneaking flag in Java 26.3 ServerboundInteractPacket).
+        let mut first = [0u8; 1];
         reader
-            .read_exact(&mut low_16)
+            .read_exact(&mut first)
             .map_err(|e| ReadingError::Message(e.to_string()))?;
-
-        if low_16[0] == 0 && low_16[1] == 0 {
+        if first[0] == 0 {
             return Ok(Self(Vector3::new(0.0, 0.0, 0.0)));
         }
+        let mut second = [0u8; 1];
+        reader
+            .read_exact(&mut second)
+            .map_err(|e| ReadingError::Message(e.to_string()))?;
+        let low_16 = [first[0], second[0]];
 
         let mut mid_32 = [0u8; 4];
         reader
@@ -150,6 +157,21 @@ fn from_long(quantized: i64, scale: f64) -> f64 {
 mod tests {
     use super::{LpVector3d, encode_legacy_velocity_component};
     use pumpkin_util::math::vector3::Vector3;
+
+    #[test]
+    fn zero_lp_vector_does_not_consume_next_packet_field() {
+        use crate::ser::ReadingError;
+        let data = [0_u8, 1_u8];
+        let mut remaining = data.as_slice();
+        let decoded = LpVector3d::read(&mut remaining).expect("read zero vector");
+        assert_eq!(decoded.0, Vector3::new(0.0, 0.0, 0.0));
+        assert_eq!(remaining, &[1]);
+        let truncated = &mut [].as_slice();
+        assert!(matches!(
+            LpVector3d::read(truncated),
+            Err(ReadingError::Message(_))
+        ));
+    }
 
     #[test]
     fn legacy_component_is_clamped_and_scaled() {

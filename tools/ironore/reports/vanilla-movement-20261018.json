@@ -1,0 +1,35 @@
+{
+  "backend": "vanilla",
+  "protocol": 777,
+  "target_version": "26.3",
+  "expected_data_version": 5023,
+  "executable_sha256": null,
+  "vanilla_jar_sha1": "33680f5f2ac32864d6d7cf5e56a705fdb3e05f4c",
+  "observations": [
+    {
+      "name": "ground_zombie_routes_around_wall",
+      "passed": true,
+      "detail": "observed expected behavior"
+    },
+    {
+      "name": "water_cod_random_swim",
+      "passed": true,
+      "detail": "observed expected behavior"
+    },
+    {
+      "name": "flying_allay_wander",
+      "passed": true,
+      "detail": "observed expected behavior"
+    },
+    {
+      "name": "clean_server_stop",
+      "passed": true,
+      "detail": "exit code 0"
+    }
+  ],
+  "command_count": 216,
+  "full_report_sha256": "d51b74226d3b8d4ddf2716f7c6dd0b85c28976a4e534a3a02b9423727a7f3e5e",
+  "harness_sha256": "35769f47adc14f1ff122029cf788dd5abedc48a91cbb6d3f8d1580e80290a61d",
+  "date": "2026-10-18",
+  "scope": "Three active movement probes and clean stop; not full entity parity"
+}

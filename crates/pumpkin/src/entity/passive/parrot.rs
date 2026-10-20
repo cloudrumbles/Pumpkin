@@ -1,18 +1,32 @@
-use std::sync::{Arc, Weak};
+use std::sync::{
+    Arc, Weak,
+    atomic::{AtomicI32, Ordering},
+};
 
 use pumpkin_data::damage::DamageType;
 use pumpkin_data::effect::StatusEffect;
 use pumpkin_data::entity::EntityType;
 use pumpkin_data::item_stack::ItemStack;
+use pumpkin_data::sound::{Sound, SoundCategory};
 use pumpkin_data::tag::{self, Taggable};
+use pumpkin_nbt::compound::NbtCompound;
+use pumpkin_protocol::codec::var_int::VarInt;
 
 use crate::entity::{
     Entity, EntityBase,
+    ageable::{AgeableData, AgeableMob},
     ai::goal::{
-        look_around::RandomLookAroundGoal, look_at_entity::LookAtEntityGoal, swim::SwimGoal,
-        wander_around::WanderAroundGoal,
+        escape_danger::EscapeDangerGoal, follow_mob::FollowMobGoal, follow_owner::FollowOwnerGoal,
+        look_around::RandomLookAroundGoal, look_at_entity::LookAtEntityGoal,
+        sit_when_ordered_to::SitWhenOrderedToGoal, swim::SwimGoal,
+        water_avoiding_random_flying::WaterAvoidingRandomFlyingGoal,
     },
+    ai::pathfinder::Navigator,
     mob::{Mob, MobEntity},
+    passive::{
+        animal::Animal,
+        tamable::{TamableAnimal, TamableData},
+    },
     player::Player,
 };
 
@@ -25,12 +39,24 @@ const COOKIE_POISON_DURATION: i32 = 900;
 /// Wiki: <https://minecraft.wiki/w/Parrot>
 pub struct ParrotEntity {
     pub mob_entity: MobEntity,
+    tamable_data: TamableData,
+    ageable_data: AgeableData,
+    variant: AtomicI32,
 }
 
 impl ParrotEntity {
     pub fn new(entity: Entity) -> Arc<Self> {
         let mob_entity = MobEntity::new(entity);
-        let parrot = Self { mob_entity };
+        *mob_entity
+            .navigator
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Navigator::flying();
+        let parrot = Self {
+            mob_entity,
+            tamable_data: TamableData::default(),
+            ageable_data: AgeableData::default(),
+            variant: AtomicI32::new(rand::random_range(0..5)),
+        };
         let mob_arc = Arc::new(parrot);
         let mob_weak: Weak<dyn Mob> = {
             let mob_arc: Arc<dyn Mob> = mob_arc.clone();
@@ -45,12 +71,16 @@ impl ParrotEntity {
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
 
             goal_selector.add_goal(0, Box::new(SwimGoal::default()));
-            goal_selector.add_goal(1, Box::new(WanderAroundGoal::new(1.0)));
+            goal_selector.add_goal(0, EscapeDangerGoal::new(1.25));
+            goal_selector.add_goal(2, Box::new(SitWhenOrderedToGoal::new()));
+            goal_selector.add_goal(2, FollowOwnerGoal::new(1.0, 5.0, 1.0));
+            goal_selector.add_goal(2, Box::new(WaterAvoidingRandomFlyingGoal::new(1.0)));
+            goal_selector.add_goal(3, Box::new(FollowMobGoal::new(1.0, 3.0, 7.0)));
             goal_selector.add_goal(
-                2,
-                LookAtEntityGoal::with_default(mob_weak, &EntityType::PLAYER, 6.0),
+                1,
+                LookAtEntityGoal::with_default(mob_weak, &EntityType::PLAYER, 8.0),
             );
-            goal_selector.add_goal(3, Box::new(RandomLookAroundGoal::default()));
+            goal_selector.add_goal(4, Box::new(RandomLookAroundGoal::default()));
         };
 
         mob_arc
@@ -87,24 +117,153 @@ impl ParrotEntity {
     }
 }
 
+impl AgeableMob for ParrotEntity {
+    fn can_be_a_baby(&self) -> bool {
+        // These species extend AgeableMob in Java 26.3, but do not persist
+        // Age/ForcedAge/AgeLocked and reject baby age from summon NBT.
+        false
+    }
+
+    fn get_ageable_data(&self) -> &AgeableData {
+        &self.ageable_data
+    }
+}
+
+impl Animal for ParrotEntity {
+    fn is_food(&self, _stack: &ItemStack) -> bool {
+        false
+    }
+}
+impl TamableAnimal for ParrotEntity {
+    fn get_tamable_data(&self) -> &TamableData {
+        &self.tamable_data
+    }
+}
+
 impl Mob for ParrotEntity {
+    fn as_ageable(&self) -> Option<&dyn AgeableMob> {
+        Some(self)
+    }
+
+    fn as_animal(&self) -> Option<&dyn Animal> {
+        Some(self)
+    }
+
+    fn as_tamable(&self) -> Option<&dyn TamableAnimal> {
+        Some(self)
+    }
+    fn create_breed_offspring(
+        &self,
+        _world: &Arc<crate::world::World>,
+    ) -> Option<Arc<dyn EntityBase>> {
+        // Java 26.3 Parrot.getBreedOffspring explicitly returns null.
+        None
+    }
+
+    fn mob_tick(&self, _caller: &dyn EntityBase) {
+        self.ageable_ai_step();
+    }
+
+    fn requires_custom_persistence(&self) -> bool {
+        self.is_tame()
+    }
     fn get_mob_entity(&self) -> &MobEntity {
         &self.mob_entity
     }
 
     fn mob_interact(&self, player: &Arc<Player>, item_stack: &mut ItemStack) -> bool {
-        // Vanilla checks the poisonous food tag last, after taming, which isn't
-        // implemented yet. Nothing in `parrot_food` is also in
-        // `parrot_poisonous_food`, so the two branches can't be confused.
-        if !item_stack
-            .get_item()
+        if !self.is_tame() && item_stack.item.has_tag(&tag::Item::MINECRAFT_PARROT_FOOD) {
+            item_stack.decrement_unless_creative(player.gamemode.load(), 1);
+            self.get_entity().play_sound(Sound::EntityParrotEat);
+            let success = rand::random_range(0..10) == 0;
+            if success {
+                TamableAnimal::tame(self, player.gameprofile.id);
+            }
+            self.spawn_taming_particles(success);
+            return true;
+        }
+        if item_stack
+            .item
             .has_tag(&tag::Item::MINECRAFT_PARROT_POISONOUS_FOOD)
         {
-            return self.mob_entity.mob_interact(player, item_stack);
+            self.eat_cookie(player, item_stack);
+            return true;
         }
+        if self.is_tame()
+            && self.is_owned_by(&player.gameprofile.id)
+            && self.get_entity().on_ground.load(Ordering::Relaxed)
+        {
+            self.set_ordered_to_sit(!self.is_ordered_to_sit());
+            return true;
+        }
+        self.mob_entity.mob_interact(player, item_stack)
+    }
 
-        self.eat_cookie(player, item_stack);
-        true
+    fn custom_server_ai_step(&self, _caller: &dyn EntityBase) {
+        let entity = self.get_entity();
+        if self.is_navigator_idle() {
+            entity.set_has_no_gravity(false);
+        }
+        if entity.is_silent() || rand::random_range(0..800) != 0 {
+            return;
+        }
+        let world = entity.world.load();
+        let sounds: Vec<Sound> = world
+            .get_entities_at_box(&entity.bounding_box.load().expand(20.0, 20.0, 20.0))
+            .iter()
+            .filter(|mob| !mob.get_entity().is_silent() && mob.get_living_entity().is_some())
+            .filter_map(|mob| {
+                let kind = mob.get_entity().entity_type.resource_name;
+                let kind = if kind == "cave_spider" {
+                    "spider"
+                } else {
+                    kind
+                };
+                Sound::from_name(&format!("entity.parrot.imitate.{kind}"))
+            })
+            .collect();
+        if !sounds.is_empty() {
+            world.play_sound_fine(
+                sounds[rand::random_range(0..sounds.len())],
+                SoundCategory::Neutral,
+                &entity.pos.load(),
+                0.7,
+                rand::random_range(0.8..1.2),
+            );
+        }
+    }
+    fn post_tick(&self) {
+        let entity = self.get_entity();
+        let velocity = entity.velocity.load();
+        if !entity.on_ground.load(Ordering::Relaxed) && velocity.y < 0.0 {
+            entity.velocity.store(velocity.multiply(1.0, 0.6, 1.0));
+        }
+        self.mob_entity.living_entity.fall_distance.store(0.0);
+    }
+    fn on_damage(&self, _damage_type: DamageType, _source: Option<&dyn EntityBase>) {
+        self.set_ordered_to_sit(false);
+    }
+    fn mob_write_nbt(&self, nbt: &mut NbtCompound) {
+        self.write_tamable_nbt(nbt);
+        nbt.put_int("Variant", self.variant.load(Ordering::Relaxed));
+    }
+    fn mob_read_nbt(&self, nbt: &NbtCompound) {
+        self.read_tamable_nbt(nbt);
+        self.variant.store(
+            nbt.get_int("Variant").unwrap_or(0).clamp(0, 4),
+            Ordering::Relaxed,
+        );
+    }
+    fn mob_init_data_tracker(&self) {
+        let entity = self.get_entity();
+        entity.set_synced_data(
+            pumpkin_data::tracked_data::parrot::DATA_BABY_ID,
+            entity.age.load(Ordering::Relaxed) < 0,
+        );
+        entity.set_synced_data(
+            pumpkin_data::tracked_data::parrot::DATA_VARIANT_ID,
+            VarInt(self.variant.load(Ordering::Relaxed)),
+        );
     }
 }
 

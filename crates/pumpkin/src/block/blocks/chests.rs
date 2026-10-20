@@ -590,7 +590,7 @@ fn get_chest_properties_if_can_connect(
     None
 }
 
-fn is_chest_blocked(world: &World, block_pos: &BlockPos) -> bool {
+pub(crate) fn is_chest_blocked(world: &World, block_pos: &BlockPos) -> bool {
     // TODO: Block opening when a cat is sitting on top.
     has_block_on_top(world, block_pos)
 }

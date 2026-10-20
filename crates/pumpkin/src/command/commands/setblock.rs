@@ -7,6 +7,7 @@ use pumpkin_world::world::BlockFlags;
 use crate::command::argument_builder::{ArgumentBuilder, argument, command, literal};
 use crate::command::argument_types::block::BlockStateArgumentType;
 use crate::command::argument_types::coordinates::block_pos::BlockPosArgumentType;
+use crate::command::block_input::{notify_neighbors, place_block, placement_flags};
 use crate::command::context::command_context::CommandContext;
 use crate::command::errors::error_types::CommandErrorType;
 use crate::command::node::dispatcher::CommandDispatcher;
@@ -39,57 +40,25 @@ struct SetBlockExecutor(Mode);
 
 impl CommandExecutor for SetBlockExecutor {
     fn execute(&self, context: &CommandContext) -> CommandExecutorResult {
-        let block_state_id = BlockStateArgumentType::get(context, "block")?.state.id;
+        let input = BlockStateArgumentType::get(context, "block")?;
         let mode = self.0;
         let world = context.source.world();
         let pos = BlockPosArgumentType::get_loaded_block_pos(context, "pos")?;
 
-        let success = match mode {
-            Mode::Destroy => {
-                world.break_block(
-                    &pos,
-                    None,
-                    BlockFlags::SKIP_DROPS | BlockFlags::NOTIFY_ALL | BlockFlags::FORCE_STATE,
-                );
-                world.set_block_state(
-                    &pos,
-                    block_state_id,
-                    BlockFlags::NOTIFY_ALL | BlockFlags::FORCE_STATE,
-                );
-                true
-            }
-            Mode::Replace => {
-                world.set_block_state(
-                    &pos,
-                    block_state_id,
-                    BlockFlags::NOTIFY_ALL | BlockFlags::FORCE_STATE,
-                );
-                true
-            }
-            Mode::Keep => {
-                let old_state = world.get_block_state(&pos);
-                if old_state.is_air() {
-                    world.set_block_state(
-                        &pos,
-                        block_state_id,
-                        BlockFlags::NOTIFY_ALL | BlockFlags::FORCE_STATE,
-                    );
-                    true
-                } else {
-                    false
-                }
-            }
-            Mode::Strict => {
-                world.set_block_state(
-                    &pos,
-                    block_state_id,
-                    BlockFlags::NOTIFY_LISTENERS
-                        | BlockFlags::SKIP_BLOCK_ADDED_CALLBACK
-                        | BlockFlags::FORCE_STATE,
-                );
-                true
-            }
-        };
+        let previous = world.get_block_state_id(&pos);
+        if matches!(mode, Mode::Keep) && !previous.to_state().is_air() {
+            return Err(ERROR_FAILED.create_without_context());
+        }
+        let destroyed = matches!(mode, Mode::Destroy)
+            && world
+                .break_block(&pos, None, BlockFlags::NOTIFY_ALL)
+                .is_some();
+        let strict = matches!(mode, Mode::Strict);
+        let placed = place_block(world, &pos, &input, placement_flags(strict));
+        let success = placed || destroyed;
+        if success && !strict {
+            notify_neighbors(world, &pos, previous);
+        }
 
         if success {
             world.flush_block_updates();

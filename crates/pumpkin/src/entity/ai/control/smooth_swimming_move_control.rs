@@ -51,6 +51,13 @@ impl Control for SmoothSwimmingMoveControl {}
 
 impl MoveControlTrait for SmoothSwimmingMoveControl {
     fn tick(&mut self, mob: &dyn Mob) {
+        if mob
+            .cast_any()
+            .downcast_ref::<crate::entity::passive::axolotl::AxolotlEntity>()
+            .is_some_and(|axolotl| axolotl.is_playing_dead())
+        {
+            return;
+        }
         let mob_entity = mob.get_mob_entity();
         let living_entity = &mob_entity.living_entity;
         let entity = &living_entity.entity;
@@ -90,7 +97,7 @@ impl MoveControlTrait for SmoothSwimmingMoveControl {
             let speed = (self.speed_modifier * movement_speed) as f32;
 
             if entity.touching_water.load(Ordering::Relaxed) {
-                let water_speed = speed * self.in_water_speed_modifier;
+                living_entity.set_ai_speed(f64::from(speed * self.in_water_speed_modifier));
                 let sqrt = xd.hypot(zd);
                 if yd.abs() > 1.0E-5 || sqrt > 1.0E-5 {
                     let mut x_rot_d = -((yd.atan2(sqrt).to_degrees()) as f32);
@@ -106,18 +113,17 @@ impl MoveControlTrait for SmoothSwimmingMoveControl {
                 let sin = pitch_rad.sin();
                 living_entity.movement_input.store(Vector3::new(
                     0.0,
-                    -(sin * water_speed) as f64,
-                    (cos * water_speed) as f64,
+                    -(sin * speed) as f64,
+                    (cos * speed) as f64,
                 ));
             } else {
                 let left_to_turn = wrap_degrees(entity.yaw.load() - y_rot_d).abs();
                 let factor = Self::get_turning_speed_factor(left_to_turn);
                 let land_speed = speed * self.outside_water_speed_modifier * factor;
-                living_entity
-                    .movement_input
-                    .store(Vector3::new(0.0, 0.0, land_speed as f64));
+                living_entity.set_ai_speed(f64::from(land_speed));
             }
         } else {
+            living_entity.set_ai_speed(0.0);
             living_entity
                 .movement_input
                 .store(Vector3::new(0.0, 0.0, 0.0));
@@ -132,6 +138,12 @@ impl MoveControlTrait for SmoothSwimmingMoveControl {
         self.operation = Operation::MoveTo;
     }
 
+    fn wanted_position(&self) -> Vector3<f64> {
+        Vector3::new(self.wanted_x, self.wanted_y, self.wanted_z)
+    }
+    fn speed_modifier(&self) -> f64 {
+        self.speed_modifier
+    }
     fn has_wanted(&self) -> bool {
         self.operation == Operation::MoveTo
     }

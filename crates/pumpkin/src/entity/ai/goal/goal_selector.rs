@@ -72,6 +72,16 @@ impl GoalSelector {
         running
     }
 
+    /// Release running goals without losing registrations (NoAI, death).
+    pub fn stop_all(&mut self, mob: &dyn Mob) {
+        for goal in &mut self.goals {
+            if goal.running {
+                goal.stop(mob);
+            }
+        }
+        self.goals_by_control = [usize::MAX; 4];
+    }
+
     fn uses_any(prioritized_goal: &PrioritizedGoal, controls: Controls) -> bool {
         let goal_controls = prioritized_goal.controls();
         for control in Controls::ITER {

@@ -1,12 +1,10 @@
 use std::sync::Arc;
 
-use uuid::Uuid;
-
 use pumpkin_data::entity::EntityStatus;
 use rand::RngExt;
 
 use crate::entity::experience_orb::ExperienceOrbEntity;
-use crate::entity::{EntityBase, ai::pathfinder::NavigatorGoal, mob::Mob, r#type::from_type};
+use crate::entity::{EntityBase, ai::pathfinder::NavigatorGoal, mob::Mob};
 
 use super::{Controls, Goal};
 
@@ -99,11 +97,25 @@ impl BreedGoal {
         mate.reset_love();
         mate.set_breeding_cooldown(6000);
 
+        // Vanilla uses Age=6000 as the parent cooldown, which is also saved
+        // and counts down on each ageable tick. The separate internal
+        // cooldown stays in sync for callers not implementing AgeableMob.
+        if let Some(ageable) = mob.as_ageable() {
+            ageable.set_age(6000);
+        }
+        if let Some(ageable) = mate.get_mob().and_then(Mob::as_ageable) {
+            ageable.set_age(6000);
+        }
+
         let parent_pos = entity.pos.load();
-        let baby = from_type(entity.entity_type, parent_pos, &world, Uuid::new_v4());
-        baby.get_entity().set_age(-24000);
         let world_full = entity.world.load_full();
-        world_full.spawn_entity(baby);
+        let offspring = mate.get_mob().map_or_else(
+            || mob.create_breed_offspring(&world_full),
+            |partner| mob.create_breed_offspring_with_partner(&world_full, partner),
+        );
+        if let Some(baby) = offspring {
+            world_full.spawn_entity(baby);
+        }
 
         world_full.send_entity_status(entity, EntityStatus::InLoveHearts, None);
         // TODO: gate on the `animalBreedingDropsXp` game rule once it exists.

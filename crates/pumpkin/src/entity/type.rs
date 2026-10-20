@@ -52,6 +52,7 @@ use crate::entity::mob::skeleton::{
 };
 use crate::entity::mob::slime::SlimeEntity;
 use crate::entity::mob::spider::SpiderEntity;
+use crate::entity::mob::sulfur_cube::SulfurCubeEntity;
 use crate::entity::mob::vex::VexEntity;
 use crate::entity::mob::vindicator::VindicatorEntity;
 use crate::entity::mob::warden::WardenEntity;
@@ -205,7 +206,10 @@ pub fn from_type(
         id if id == EntityType::ARMADILLO.id => ArmadilloEntity::new(entity),
         id if id == EntityType::AXOLOTL.id => AxolotlEntity::new(entity),
         id if id == EntityType::BEE.id => BeeEntity::new(entity),
-        id if id == EntityType::CAMEL.id => CamelEntity::new(entity),
+        id if id == EntityType::SULFUR_CUBE.id => SulfurCubeEntity::new(entity),
+        id if id == EntityType::CAMEL.id || id == EntityType::CAMEL_HUSK.id => {
+            CamelEntity::new(entity)
+        }
         id if id == EntityType::COPPER_GOLEM.id => CopperGolemEntity::new(entity),
         id if id == EntityType::FROG.id => FrogEntity::new(entity),
         id if id == EntityType::GOAT.id => GoatEntity::new(entity),
@@ -224,7 +228,9 @@ pub fn from_type(
         id if id == EntityType::TROPICAL_FISH.id => TropicalFishEntity::new(entity),
         id if id == EntityType::TADPOLE.id => TadpoleEntity::new(entity),
         id if id == EntityType::DOLPHIN.id => DolphinEntity::new(entity),
-        id if id == EntityType::NAUTILUS.id => NautilusEntity::new(entity),
+        id if id == EntityType::NAUTILUS.id || id == EntityType::ZOMBIE_NAUTILUS.id => {
+            NautilusEntity::new(entity)
+        }
 
         id if id == EntityType::SNOW_GOLEM.id => SnowGolemEntity::new(entity),
         id if id == EntityType::IRON_GOLEM.id => IronGolemEntity::new(entity),

@@ -18,10 +18,18 @@ use crate::entity::{
     Entity, EntityBase,
     ageable::{AgeableData, AgeableMob},
     ai::goal::{
-        active_target::ActiveTargetGoal, breed::BreedGoal, escape_danger::EscapeDangerGoal,
-        follow_parent::FollowParentGoal, look_around::RandomLookAroundGoal,
-        look_at_entity::LookAtEntityGoal, ranged_attack::RangedAttackGoal, revenge::RevengeGoal,
-        swim::SwimGoal, tempt::TemptGoal, wander_around::WanderAroundGoal,
+        active_target::ActiveTargetGoal,
+        breed::BreedGoal,
+        escape_danger::EscapeDangerGoal,
+        follow_parent::FollowParentGoal,
+        llama_caravan::{CaravanState, LlamaFollowCaravanGoal},
+        look_around::RandomLookAroundGoal,
+        look_at_entity::LookAtEntityGoal,
+        ranged_attack::RangedAttackGoal,
+        revenge::RevengeGoal,
+        swim::SwimGoal,
+        tempt::TemptGoal,
+        wander_around::WanderAroundGoal,
     },
     mob::{Mob, MobEntity, RangedAttackMob},
     passive::animal::{Animal, get_carpet_color_from_item},
@@ -78,6 +86,7 @@ impl LlamaVariant {
 pub struct LlamaEntity {
     pub mob_entity: MobEntity,
     pub ageable_data: AgeableData,
+    pub caravan: CaravanState,
     pub variant: AtomicI32,
     pub strength: AtomicI32,
     pub carpet_color: AtomicCell<Option<u8>>,
@@ -97,6 +106,7 @@ impl LlamaEntity {
         let llama = Self {
             mob_entity,
             ageable_data: AgeableData::default(),
+            caravan: CaravanState::default(),
             variant: AtomicI32::new(variant.id()),
             strength: AtomicI32::new(strength),
             carpet_color: AtomicCell::new(None),
@@ -129,7 +139,8 @@ impl LlamaEntity {
 
             goal_selector.add_goal(0, Box::new(SwimGoal::default()));
             goal_selector.add_goal(1, EscapeDangerGoal::new(1.2));
-            goal_selector.add_goal(2, BreedGoal::new(1.0));
+            goal_selector.add_goal(2, Box::new(LlamaFollowCaravanGoal::new()));
+            goal_selector.add_goal(4, BreedGoal::new(1.0));
             goal_selector.add_goal(
                 3,
                 Box::new(RangedAttackGoal::new(ranged_weak, 1.25, 40, 20.0)),
@@ -264,6 +275,10 @@ impl Animal for LlamaEntity {
 }
 
 impl Mob for LlamaEntity {
+    fn is_tamed(&self) -> bool {
+        self.is_tame()
+    }
+
     fn as_ageable(&self) -> Option<&dyn AgeableMob> {
         Some(self)
     }

@@ -27,6 +27,7 @@ pub use pumpkin_command::*;
 
 pub mod argument_builder;
 pub mod argument_types;
+mod block_input;
 pub mod client_suggestions;
 pub mod commands;
 pub mod context;

@@ -34,6 +34,7 @@ use pumpkin_util::version::JavaMinecraftVersion;
 use crate::entity::player::Player;
 use crate::entity::{
     Entity, EntityBase,
+    ageable::{AgeableData, AgeableMob},
     ai::{
         goal::{
             avoid_entity::AvoidEntityGoal, look_around::RandomLookAroundGoal,
@@ -332,6 +333,7 @@ fn explorer_map_target(
 
 pub struct VillagerEntity {
     pub mob_entity: MobEntity,
+    pub ageable_data: AgeableData,
     pub villager_data: std::sync::Mutex<VillagerData>,
     pub food_level: AtomicI32,
     pub xp: AtomicI32,
@@ -401,6 +403,7 @@ impl VillagerEntity {
 
         let villager = Self {
             mob_entity,
+            ageable_data: AgeableData::default(),
             villager_data: std::sync::Mutex::new(villager_data),
             food_level: AtomicI32::new(0),
             xp: AtomicI32::new(0),
@@ -1852,7 +1855,17 @@ impl VillagerEntity {
     }
 }
 
+impl AgeableMob for VillagerEntity {
+    fn get_ageable_data(&self) -> &AgeableData {
+        &self.ageable_data
+    }
+}
+
 impl Mob for VillagerEntity {
+    fn as_ageable(&self) -> Option<&dyn AgeableMob> {
+        Some(self)
+    }
+
     #[expect(clippy::too_many_lines)]
     fn mob_write_nbt(&self, nbt: &mut NbtCompound) {
         {
@@ -2288,6 +2301,7 @@ impl Mob for VillagerEntity {
     }
 
     fn mob_tick(&self, _caller: &dyn EntityBase) {
+        self.ageable_ai_step();
         self.villager_mob_tick();
     }
 

@@ -3,8 +3,7 @@ use std::sync::{
     atomic::{AtomicBool, Ordering},
 };
 
-use pumpkin_data::entity::{EntityStatus, EntityType};
-use pumpkin_data::item::Item;
+use pumpkin_data::entity::{EntityPose, EntityStatus, EntityType};
 use pumpkin_data::item_stack::ItemStack;
 use pumpkin_data::tag::{self, Taggable};
 use pumpkin_nbt::compound::NbtCompound;
@@ -13,10 +12,11 @@ use rand::RngExt;
 
 use crate::entity::{
     Entity, EntityBase,
+    ageable::{AgeableData, AgeableMob},
     ai::goal::{
-        active_target::ActiveTargetGoal, avoid_entity::AvoidEntityGoal, breed::BreedGoal,
-        escape_danger::EscapeDangerGoal, follow_parent::FollowParentGoal,
-        look_around::RandomLookAroundGoal, look_at_entity::LookAtEntityGoal, swim::SwimGoal,
+        ConditionalGoal, Controls, Goal, active_target::ActiveTargetGoal,
+        avoid_entity::AvoidEntityGoal, breed::BreedGoal, leap_at_target::LeapAtTargetGoal,
+        look_at_entity::LookAtEntityGoal, ocelot_attack::OcelotAttackGoal, swim::SwimGoal,
         tempt::TemptGoal, wander_around::WanderAroundGoal,
     },
     mob::{Mob, MobEntity},
@@ -24,14 +24,14 @@ use crate::entity::{
     player::Player,
 };
 
-const TEMPT_ITEMS: &[&Item] = &[&Item::COD, &Item::SALMON];
-
 /// Represents an Ocelot, a shy passive mob found in jungles.
 ///
 /// Wiki: <https://minecraft.wiki/w/Ocelot>
 pub struct OcelotEntity {
     pub mob_entity: MobEntity,
     pub is_trusting: AtomicBool,
+    ageable_data: AgeableData,
+    is_tempted: AtomicBool,
 }
 
 impl OcelotEntity {
@@ -40,6 +40,8 @@ impl OcelotEntity {
         let ocelot = Self {
             mob_entity,
             is_trusting: AtomicBool::new(false),
+            ageable_data: AgeableData::default(),
+            is_tempted: AtomicBool::new(false),
         };
         let mob_arc = Arc::new(ocelot);
         let mob_weak: Weak<dyn Mob> = {
@@ -56,28 +58,40 @@ impl OcelotEntity {
 
             // Goal 1: FloatGoal (SwimGoal)
             goal_selector.add_goal(1, Box::new(SwimGoal::default()));
-            // Goal 1: PanicGoal (EscapeDangerGoal)
-            goal_selector.add_goal(1, EscapeDangerGoal::new(1.5));
-            // Goal 3: OcelotTemptGoal
-            goal_selector.add_goal(3, Box::new(TemptGoal::new(0.6, TEMPT_ITEMS, true)));
+            goal_selector.add_goal(
+                3,
+                Box::new(OcelotTemptGoal(TemptGoal::with_tag(
+                    0.6,
+                    &tag::Item::MINECRAFT_OCELOT_FOOD,
+                    2.5,
+                ))),
+            );
             // Goal 4: OcelotAvoidEntityGoal (when not trusting)
             goal_selector.add_goal(
                 4,
-                Box::new(AvoidEntityGoal::new(&EntityType::PLAYER, 16.0, 0.8, 1.33)),
+                ConditionalGoal::new(
+                    Box::new(AvoidEntityGoal::new(&EntityType::PLAYER, 16.0, 0.8, 1.33)),
+                    |mob| {
+                        mob.cast_any()
+                            .downcast_ref::<Self>()
+                            .is_some_and(|ocelot| !ocelot.is_trusting())
+                    },
+                ),
             );
+            goal_selector.add_goal(7, Box::new(LeapAtTargetGoal::new(0.3)));
+            goal_selector.add_goal(8, Box::new(OcelotAttackGoal::new()));
             // Goal 9: BreedGoal
             goal_selector.add_goal(9, BreedGoal::new(0.8));
-            // Goal 9: FollowParentGoal
-            goal_selector.add_goal(9, Box::new(FollowParentGoal::new(0.8)));
             // Goal 10: WaterAvoidingRandomStrollGoal (WanderAroundGoal)
-            goal_selector.add_goal(10, Box::new(WanderAroundGoal::new(0.8)));
+            goal_selector.add_goal(
+                10,
+                Box::new(WanderAroundGoal::avoiding_water(0.8, 0.000_010_000_001)),
+            );
             // Goal 11: LookAtPlayerGoal
             goal_selector.add_goal(
                 11,
                 LookAtEntityGoal::with_default(mob_weak, &EntityType::PLAYER, 10.0),
             );
-            // Goal 11: RandomLookAroundGoal
-            goal_selector.add_goal(11, Box::new(RandomLookAroundGoal::default()));
         };
 
         {
@@ -94,7 +108,19 @@ impl OcelotEntity {
             );
             target_selector.add_goal(
                 1,
-                ActiveTargetGoal::with_default(&mob_arc.mob_entity, &EntityType::TURTLE, false),
+                Box::new(ActiveTargetGoal::new(
+                    &mob_arc.mob_entity,
+                    &EntityType::TURTLE,
+                    10,
+                    false,
+                    false,
+                    Some(
+                        |target: &crate::entity::living::LivingEntity, _: &crate::world::World| {
+                            target.entity.age.load(Ordering::Relaxed) < 0
+                                && !target.entity.touching_water.load(Ordering::Relaxed)
+                        },
+                    ),
+                )),
             );
         };
 
@@ -116,12 +142,48 @@ impl Animal for OcelotEntity {
     fn is_food(&self, item_stack: &ItemStack) -> bool {
         let item = item_stack.get_item();
         item.has_tag(&tag::Item::MINECRAFT_OCELOT_FOOD)
-            || item == &Item::COD
-            || item == &Item::SALMON
+    }
+}
+
+impl AgeableMob for OcelotEntity {
+    fn get_ageable_data(&self) -> &AgeableData {
+        &self.ageable_data
     }
 }
 
 impl Mob for OcelotEntity {
+    fn as_ageable(&self) -> Option<&dyn AgeableMob> {
+        Some(self)
+    }
+
+    fn mob_tick(&self, _caller: &dyn EntityBase) {
+        self.ageable_ai_step();
+    }
+
+    fn remove_when_far_away(&self, _distance_sq: f64) -> bool {
+        !self.is_trusting() && self.get_entity().tick_count.load(Ordering::Relaxed) > 2400
+    }
+
+    fn custom_server_ai_step(&self, _caller: &dyn EntityBase) {
+        let speed = {
+            let nav = self
+                .mob_entity
+                .navigator
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if nav.is_idle() {
+                0.0
+            } else {
+                nav.get_speed_modifier()
+            }
+        };
+        self.get_entity().set_pose(if speed == 0.6 {
+            EntityPose::Crouching
+        } else {
+            EntityPose::Standing
+        });
+        self.get_entity().set_sprinting(speed == 1.33);
+    }
     fn as_animal(&self) -> Option<&dyn Animal> {
         Some(self)
     }
@@ -160,7 +222,11 @@ impl Mob for OcelotEntity {
             .load()
             .squared_distance_to_vec(&player.get_entity().pos.load());
 
-        if !self.is_trusting() && is_food && dist_sqr < 9.0 {
+        if self.is_tempted.load(Ordering::Relaxed)
+            && !self.is_trusting()
+            && is_food
+            && dist_sqr < 9.0
+        {
             item_stack.decrement_unless_creative(player.gamemode.load(), 1);
 
             let mut rng = rand::rng();
@@ -187,5 +253,42 @@ impl Mob for OcelotEntity {
             item_stack,
             pumpkin_data::sound::Sound::EntityOcelotAmbient,
         )
+    }
+}
+
+struct OcelotTemptGoal(TemptGoal);
+
+impl Goal for OcelotTemptGoal {
+    fn can_start(&mut self, mob: &dyn Mob) -> bool {
+        self.0.can_start(mob)
+    }
+    fn should_continue(&mut self, mob: &dyn Mob) -> bool {
+        self.0.set_can_scare(
+            mob.cast_any()
+                .downcast_ref::<OcelotEntity>()
+                .is_some_and(|ocelot| !ocelot.is_trusting()),
+        );
+        self.0.should_continue(mob)
+    }
+    fn start(&mut self, mob: &dyn Mob) {
+        self.0.start(mob);
+        if let Some(ocelot) = mob.cast_any().downcast_ref::<OcelotEntity>() {
+            ocelot.is_tempted.store(true, Ordering::Relaxed);
+        }
+    }
+    fn stop(&mut self, mob: &dyn Mob) {
+        self.0.stop(mob);
+        if let Some(ocelot) = mob.cast_any().downcast_ref::<OcelotEntity>() {
+            ocelot.is_tempted.store(false, Ordering::Relaxed);
+        }
+    }
+    fn tick(&mut self, mob: &dyn Mob) {
+        self.0.tick(mob);
+    }
+    fn should_run_every_tick(&self) -> bool {
+        self.0.should_run_every_tick()
+    }
+    fn controls(&self) -> Controls {
+        self.0.controls()
     }
 }

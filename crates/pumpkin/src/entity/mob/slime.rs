@@ -14,6 +14,7 @@ use pumpkin_util::math::vector3::Vector3;
 use crate::entity::custom_sound::CustomSound;
 use crate::entity::{
     Entity, EntityBase,
+    ageable::{AgeableData, AgeableMob},
     ai::control::{Control, MoveControlTrait},
     ai::goal::{Goal, active_target::ActiveTargetGoal},
     mob::{Mob, MobEntity},
@@ -24,6 +25,7 @@ use rand::RngExt;
 
 pub struct SlimeEntity {
     entity: Arc<MobEntity>,
+    ageable_data: AgeableData,
     jump_delay: AtomicI32,
     target_yaw: AtomicCell<f32>,
     is_aggressive: AtomicBool,
@@ -40,6 +42,7 @@ impl SlimeEntity {
         let mob_entity = MobEntity::new(entity);
         let slime = Self {
             entity: Arc::new(mob_entity),
+            ageable_data: AgeableData::default(),
             jump_delay: AtomicI32::new(0),
             target_yaw: AtomicCell::new(0.0),
             is_aggressive: AtomicBool::new(false),
@@ -104,6 +107,14 @@ impl SlimeEntity {
         let actual_size = size.clamp(1, 127);
         let entity = &self.entity.living_entity.entity;
         entity.data.store(actual_size, Ordering::Relaxed);
+        entity.set_synced_data(
+            if entity.entity_type == &EntityType::MAGMA_CUBE {
+                pumpkin_data::tracked_data::magma_cube::ID_SIZE
+            } else {
+                pumpkin_data::tracked_data::slime::ID_SIZE
+            },
+            pumpkin_protocol::codec::var_int::VarInt(actual_size),
+        );
 
         // Update attributes
         {
@@ -276,7 +287,49 @@ impl CustomSound for SlimeEntity {
     }
 }
 
+impl AgeableMob for SlimeEntity {
+    fn can_be_a_baby(&self) -> bool {
+        // These species extend AgeableMob in Java 26.3, but do not persist
+        // Age/ForcedAge/AgeLocked and reject baby age from summon NBT.
+        false
+    }
+
+    fn get_ageable_data(&self) -> &AgeableData {
+        &self.ageable_data
+    }
+}
+
 impl Mob for SlimeEntity {
+    fn as_ageable(&self) -> Option<&dyn AgeableMob> {
+        Some(self)
+    }
+
+    fn create_breed_offspring(&self, _world: &Arc<World>) -> Option<Arc<dyn EntityBase>> {
+        // Java 26.3 AbstractCubeMob.getBreedOffspring returns null.
+        None
+    }
+
+    fn mob_init_data_tracker(&self) {
+        let entity = self.get_entity();
+        let is_magma = entity.entity_type == &EntityType::MAGMA_CUBE;
+        entity.set_synced_data(
+            if is_magma {
+                pumpkin_data::tracked_data::magma_cube::DATA_BABY_ID
+            } else {
+                pumpkin_data::tracked_data::slime::DATA_BABY_ID
+            },
+            entity.age.load(Ordering::Relaxed) < 0,
+        );
+        entity.set_synced_data(
+            if is_magma {
+                pumpkin_data::tracked_data::magma_cube::ID_SIZE
+            } else {
+                pumpkin_data::tracked_data::slime::ID_SIZE
+            },
+            pumpkin_protocol::codec::var_int::VarInt(self.get_size()),
+        );
+    }
+
     fn as_custom_sound(&self) -> Option<&dyn crate::entity::custom_sound::CustomSound> {
         Some(self)
     }
@@ -299,6 +352,7 @@ impl Mob for SlimeEntity {
     }
 
     fn mob_tick(&self, _caller: &dyn EntityBase) {
+        self.ageable_ai_step();
         self.o_squish.store(self.squish.load());
         self.squish
             .store(self.squish.load() + (self.target_squish.load() - self.squish.load()) * 0.5);
@@ -379,15 +433,19 @@ impl Mob for SlimeEntity {
                     new_pos,
                     self.entity.living_entity.entity.entity_type,
                 );
-                let slime_like = Self::new(new_entity);
-                slime_like.set_size(half_size, true);
-                slime_like
-                    .entity
-                    .living_entity
-                    .entity
-                    .yaw
-                    .store(rand::random_range(0.0..360.0));
-                world.spawn_entity_non_save(slime_like as Arc<dyn EntityBase>);
+                if self.get_entity().entity_type == &EntityType::MAGMA_CUBE {
+                    // A magma cube must split into magma cube entities, not
+                    // SlimeEntity wrappers carrying a magma type identifier.
+                    let child = super::magma_cube::MagmaCubeEntity::new(new_entity);
+                    child.set_size(half_size, true);
+                    child.get_entity().yaw.store(rand::random_range(0.0..360.0));
+                    world.spawn_entity_non_save(child as Arc<dyn EntityBase>);
+                } else {
+                    let child = Self::new(new_entity);
+                    child.set_size(half_size, true);
+                    child.get_entity().yaw.store(rand::random_range(0.0..360.0));
+                    world.spawn_entity_non_save(child as Arc<dyn EntityBase>);
+                }
             }
         }
     }
@@ -462,7 +520,9 @@ impl MoveControlTrait for SlimeMoveControl {
             }
             living_entity.jumping.store(false, Ordering::SeqCst);
         }
-        living_entity.movement_input.store(movement_input);
+        living_entity.set_ai_speed(
+            movement_input.z * living_entity.get_attribute_value(&Attributes::MOVEMENT_SPEED),
+        );
     }
 }
 

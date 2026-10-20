@@ -75,7 +75,7 @@ impl BlockEntity for JukeboxBlockEntity {
         }
     }
 
-    fn tick(&self, _world: &Arc<World>) {
+    fn tick(&self, world: &Arc<World>) {
         // Increment ticks if we're playing
         let song_length = self.song_length_ticks.load(Ordering::Relaxed);
         if song_length > 0 {
@@ -85,8 +85,11 @@ impl BlockEntity for JukeboxBlockEntity {
             // Check if song has finished
             if ticks >= song_length {
                 self.stop_playing();
+                world.emit_game_event("jukebox_stop_play", self.position.to_centered_f64());
                 // TODO: Update block state to has_record = false? Or just stop redstone?
                 // In vanilla, the disc stays but music stops and redstone turns off
+            } else if ticks % 20 == 0 {
+                world.emit_game_event("jukebox_play", self.position.to_centered_f64());
             }
         }
     }

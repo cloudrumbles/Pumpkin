@@ -25,6 +25,8 @@ pub struct RevengeGoal {
     ignore_damage_from: Option<EntityTypeFilter>,
     alert_others: bool,
     ignore_alert: Option<EntityTypeFilter>,
+    alert_condition: Option<fn(&dyn Mob, &dyn Mob, &dyn EntityBase) -> bool>,
+    continue_condition: Option<fn(&dyn Mob) -> bool>,
 }
 
 impl RevengeGoal {
@@ -41,6 +43,8 @@ impl RevengeGoal {
             ignore_damage_from: None,
             alert_others: false,
             ignore_alert: None,
+            alert_condition: None,
+            continue_condition: None,
         }
     }
 
@@ -53,6 +57,22 @@ impl RevengeGoal {
     #[must_use]
     pub const fn alerting_others(mut self) -> Self {
         self.alert_others = true;
+        self
+    }
+
+    #[must_use]
+    pub const fn alerting_others_when(
+        mut self,
+        condition: fn(&dyn Mob, &dyn Mob, &dyn EntityBase) -> bool,
+    ) -> Self {
+        self.alert_others = true;
+        self.alert_condition = Some(condition);
+        self
+    }
+
+    #[must_use]
+    pub const fn continuing_when(mut self, condition: fn(&dyn Mob) -> bool) -> Self {
+        self.continue_condition = Some(condition);
         self
     }
 
@@ -89,6 +109,12 @@ impl RevengeGoal {
                 continue;
             };
             if other_mob.get_mob_entity().get_target().is_some() {
+                continue;
+            }
+            if self
+                .alert_condition
+                .is_some_and(|condition| !condition(mob, other_mob, attacker.as_ref()))
+            {
                 continue;
             }
             if mob.as_tamable().is_some() && mob.get_owner_uuid() != other_mob.get_owner_uuid() {
@@ -154,7 +180,9 @@ impl Goal for RevengeGoal {
     }
 
     fn should_continue(&mut self, mob: &dyn Mob) -> bool {
-        self.track_target_goal.should_continue(mob)
+        self.continue_condition
+            .is_none_or(|condition| condition(mob))
+            && self.track_target_goal.should_continue(mob)
     }
 
     fn start(&mut self, mob: &dyn Mob) {

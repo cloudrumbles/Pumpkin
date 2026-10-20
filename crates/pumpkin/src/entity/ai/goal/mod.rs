@@ -3,13 +3,17 @@ use std::{any::TypeId, ops::BitOr, ptr};
 
 pub mod active_target;
 pub mod ambient_stand;
+pub mod aquatic;
 pub mod avoid_entity;
 pub mod beg;
 pub mod blaze_attack;
 pub mod bow_attack;
 pub mod break_door;
 pub mod breed;
+pub mod breeze_attack;
 pub mod chase_player;
+pub mod climb_powder_snow;
+pub mod copper_transport;
 pub mod creeper_ignite;
 pub mod destroy_egg;
 pub mod door_interact;
@@ -19,10 +23,18 @@ pub mod flee_sun;
 pub mod follow_mob;
 pub mod follow_owner;
 pub mod follow_parent;
+pub mod fox_behavior;
+pub mod frog_spawn;
+pub mod frog_tongue;
 pub mod go_to_wanted_item;
 pub mod goal_selector;
+pub mod goat_ram;
+pub mod guardian_attack;
+pub mod illusioner_spells;
 pub mod interact;
 pub mod leap_at_target;
+pub mod llama_caravan;
+pub mod long_jump;
 pub mod look_around;
 pub mod look_at_entity;
 pub mod melee_attack;
@@ -34,15 +46,18 @@ pub mod offer_flower;
 pub mod open_door;
 pub mod owner_hurt_by_target;
 pub mod owner_hurt_target;
+pub mod panda_behavior;
 pub mod pathfind_to_raid;
 pub mod pick_up_block;
 pub mod place_block;
+pub mod rabbit_raid;
 pub mod ranged_attack;
 pub mod ranged_crossbow_attack;
 pub mod restrict_sun;
 pub mod revenge;
 pub mod run_around_like_crazy;
 pub mod sit_when_ordered_to;
+pub mod spear_use;
 pub mod step_and_destroy_block;
 pub mod swim;
 pub mod teleport_towards_player;
@@ -55,6 +70,21 @@ pub mod wander_around;
 pub mod water_avoiding_random_flying;
 pub mod work_at_job_site;
 pub mod zombie_attack;
+
+pub(crate) fn is_valid_attack_target(
+    mob: &dyn Mob,
+    target: &dyn crate::entity::EntityBase,
+) -> bool {
+    target.get_entity().is_alive()
+        && target.get_entity().entity_id != mob.get_entity().entity_id
+        && !target.is_spectator()
+        && !target
+            .get_player()
+            .is_some_and(|player| player.gamemode.load() == pumpkin_util::GameMode::Creative)
+        && target
+            .get_living_entity()
+            .is_some_and(|living| living.is_alive() && mob.can_attack(living))
+}
 
 #[must_use]
 pub const fn to_goal_ticks(server_ticks: i32) -> i32 {
@@ -99,6 +129,46 @@ pub trait Goal: Send + Sync {
 
     fn controls(&self) -> Controls {
         Controls::empty()
+    }
+}
+
+/// Runs a vanilla goal only while a mob-specific state permits the activity.
+/// Stop hooks still execute when the condition changes (taming, growth, anger).
+pub struct ConditionalGoal {
+    inner: Box<dyn Goal>,
+    condition: fn(&dyn Mob) -> bool,
+}
+
+impl ConditionalGoal {
+    pub fn new(inner: Box<dyn Goal>, condition: fn(&dyn Mob) -> bool) -> Box<Self> {
+        Box::new(Self { inner, condition })
+    }
+}
+
+impl Goal for ConditionalGoal {
+    fn can_start(&mut self, mob: &dyn Mob) -> bool {
+        (self.condition)(mob) && self.inner.can_start(mob)
+    }
+    fn should_continue(&mut self, mob: &dyn Mob) -> bool {
+        (self.condition)(mob) && self.inner.should_continue(mob)
+    }
+    fn start(&mut self, mob: &dyn Mob) {
+        self.inner.start(mob);
+    }
+    fn stop(&mut self, mob: &dyn Mob) {
+        self.inner.stop(mob);
+    }
+    fn tick(&mut self, mob: &dyn Mob) {
+        self.inner.tick(mob);
+    }
+    fn should_run_every_tick(&self) -> bool {
+        self.inner.should_run_every_tick()
+    }
+    fn can_stop(&self) -> bool {
+        self.inner.can_stop()
+    }
+    fn controls(&self) -> Controls {
+        self.inner.controls()
     }
 }
 

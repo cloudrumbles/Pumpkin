@@ -3,18 +3,24 @@ use std::sync::{Arc, Weak};
 
 use pumpkin_data::attributes::Attributes;
 use pumpkin_data::entity::EntityType;
+use pumpkin_data::item_stack::ItemStack;
 use pumpkin_data::sound::{Sound, SoundCategory};
+use pumpkin_data::tag::{self, Taggable};
 use pumpkin_nbt::compound::NbtCompound;
 use pumpkin_util::math::vector3::Vector3;
 
 use crate::entity::{
     Entity, EntityBase,
+    ageable::{AgeableData, AgeableMob},
     ai::goal::{
-        active_target::ActiveTargetGoal, look_around::RandomLookAroundGoal,
-        look_at_entity::LookAtEntityGoal, melee_attack::MeleeAttackGoal, revenge::RevengeGoal,
-        swim::SwimGoal, wander_around::WanderAroundGoal,
+        active_target::ActiveTargetGoal, breed::BreedGoal, follow_parent::FollowParentGoal,
+        look_around::RandomLookAroundGoal, look_at_entity::LookAtEntityGoal,
+        melee_attack::MeleeAttackGoal, revenge::RevengeGoal, swim::SwimGoal, tempt::TemptGoal,
+        wander_around::WanderAroundGoal,
     },
     mob::{Mob, MobEntity},
+    passive::animal::Animal,
+    player::Player,
 };
 use crate::world::World;
 
@@ -23,7 +29,7 @@ pub struct HoglinEntity {
     pub immune_to_zombification: AtomicBool,
     pub time_in_overworld: AtomicI32,
     pub cannot_be_hunted: AtomicBool,
-    pub is_baby: AtomicBool,
+    pub ageable_data: AgeableData,
 }
 
 impl HoglinEntity {
@@ -66,7 +72,7 @@ impl HoglinEntity {
             immune_to_zombification: AtomicBool::new(false),
             time_in_overworld: AtomicI32::new(0),
             cannot_be_hunted: AtomicBool::new(false),
-            is_baby: AtomicBool::new(false),
+            ageable_data: AgeableData::default(),
         };
         let mob_arc = Arc::new(hoglin);
         let mob_weak: Weak<dyn Mob> = {
@@ -82,8 +88,18 @@ impl HoglinEntity {
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
 
             goal_selector.add_goal(0, Box::new(SwimGoal::default()));
+            goal_selector.add_goal(3, BreedGoal::new(1.0));
+            goal_selector.add_goal(
+                3,
+                Box::new(TemptGoal::with_tag(
+                    1.0,
+                    &tag::Item::MINECRAFT_HOGLIN_FOOD,
+                    2.5,
+                )),
+            );
             goal_selector.add_goal(4, Box::new(MeleeAttackGoal::new(1.0, true)));
-            goal_selector.add_goal(5, Box::new(WanderAroundGoal::new(1.0)));
+            goal_selector.add_goal(5, Box::new(FollowParentGoal::new(1.0)));
+            goal_selector.add_goal(6, Box::new(WanderAroundGoal::new(1.0)));
             goal_selector.add_goal(
                 6,
                 LookAtEntityGoal::with_default(mob_weak.clone(), &EntityType::PLAYER, 8.0),
@@ -162,7 +178,38 @@ impl HoglinEntity {
     }
 }
 
+impl AgeableMob for HoglinEntity {
+    fn get_ageable_data(&self) -> &AgeableData {
+        &self.ageable_data
+    }
+}
+
+impl Animal for HoglinEntity {
+    fn is_food(&self, stack: &ItemStack) -> bool {
+        stack.item.has_tag(&tag::Item::MINECRAFT_HOGLIN_FOOD)
+    }
+}
+
 impl Mob for HoglinEntity {
+    fn as_ageable(&self) -> Option<&dyn AgeableMob> {
+        Some(self)
+    }
+
+    fn as_animal(&self) -> Option<&dyn Animal> {
+        Some(self)
+    }
+
+    fn mob_interact(&self, player: &Arc<Player>, item_stack: &mut ItemStack) -> bool {
+        self.animal_interact(player, item_stack, Sound::EntityHoglinAmbient)
+    }
+
+    fn mob_init_data_tracker(&self) {
+        self.get_entity().set_synced_data(
+            pumpkin_data::tracked_data::hoglin::DATA_BABY_ID,
+            self.get_entity().age.load(Ordering::Relaxed) < 0,
+        );
+    }
+
     fn get_mob_entity(&self) -> &MobEntity {
         &self.mob_entity
     }
@@ -197,6 +244,7 @@ impl Mob for HoglinEntity {
         if !entity.is_alive() {
             return;
         }
+        self.ageable_ai_step();
 
         let world = entity.world.load();
         if self.is_converting(&world) {

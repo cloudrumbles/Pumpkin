@@ -34,7 +34,7 @@ impl Goal for OcelotAttackGoal {
             return false;
         };
 
-        if !target.get_entity().is_alive() {
+        if !super::is_valid_attack_target(mob, target.as_ref()) {
             return false;
         }
 
@@ -47,7 +47,7 @@ impl Goal for OcelotAttackGoal {
             return false;
         };
 
-        if !target.get_entity().is_alive() {
+        if !super::is_valid_attack_target(mob, target.as_ref()) {
             return false;
         }
 
@@ -109,13 +109,13 @@ impl Goal for OcelotAttackGoal {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         navigator.set_progress(NavigatorGoal::new(mob_pos, target_pos, speed_modifier));
+        drop(navigator);
 
         self.attack_time = (self.attack_time - 1).max(0);
         if dist_sq <= f64::from(melee_radius_sq) && self.attack_time <= 0 {
             self.attack_time = 20;
             mob.get_mob_entity().living_entity.swing_hand();
-            mob.get_mob_entity()
-                .try_attack(mob.get_entity(), target.as_ref());
+            mob.get_mob_entity().try_attack(mob, target.as_ref());
         }
     }
 

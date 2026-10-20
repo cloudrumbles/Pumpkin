@@ -7,7 +7,7 @@ use thiserror::Error;
 
 bitflags! {
     /// Flags used to control the side effects of a block state change.
-    /// These match the internal bitmask used by Minecraft's `setBlockState` method
+    /// These are Pumpkin flags; their bit positions differ from Java's flags.
     #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
     pub struct BlockFlags: u32 {
         /// Causes a neighbor update to be sent to surrounding blocks.
@@ -37,6 +37,8 @@ bitflags! {
         /// Prevents the `on_added` logic from firing for the new block state
         /// Use this to avoid recursive placement loops or unnecessary initialization
         const SKIP_BLOCK_ADDED_CALLBACK             = 0b000_1000_0000;
+        /// Preserves known block shapes without updating adjacent shapes.
+        const SKIP_NEIGHBOR_SHAPE_UPDATE            = 0b001_0000_0000;
     }
 }
 

@@ -162,6 +162,7 @@ impl Mob for ChickenEntity {
         if self.mob_entity.living_entity.dead.load(Relaxed) {
             return;
         }
+        self.ageable_ai_step();
         let entity = &self.mob_entity.living_entity.entity;
         let current_velocity = entity.velocity.load();
         let on_ground = entity.on_ground.load(Ordering::Relaxed);

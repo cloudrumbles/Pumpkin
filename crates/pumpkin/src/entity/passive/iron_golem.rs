@@ -3,6 +3,7 @@ use std::sync::{
     atomic::{AtomicBool, AtomicI32, Ordering},
 };
 
+use pumpkin_data::attributes::Attributes;
 use pumpkin_data::entity::{EntityStatus, EntityType, MobCategory};
 use pumpkin_data::item::Item;
 use pumpkin_data::item_stack::ItemStack;
@@ -70,8 +71,7 @@ impl IronGolemEntity {
             goal_selector.add_goal(8, Box::new(RandomLookAroundGoal::default()));
 
             target_selector.add_goal(2, Box::new(RevengeGoal::new(true)));
-            // Players are omitted (vanilla gates that on the unimplemented NeutralMob anger
-            // system). Mirrors NearestAttackableTargetGoal<Mob>: any monster but creepers.
+            // Player anger goals are installed by MobEntity's NeutralMob setup.
             target_selector.add_goal(
                 3,
                 ActiveTargetGoal::predicated(&mob_arc.mob_entity, 5, false, |living, _world| {
@@ -116,6 +116,38 @@ impl IronGolemEntity {
 }
 
 impl Mob for IronGolemEntity {
+    fn can_attack(&self, target: &crate::entity::living::LivingEntity) -> bool {
+        target.entity.entity_type != &EntityType::CREEPER
+            && target.entity.entity_type != &EntityType::GHAST
+            && !(self.is_player_created() && target.entity.entity_type == &EntityType::PLAYER)
+            && self.mob_entity.living_entity.can_attack(target)
+    }
+
+    fn prepare_melee_attack(&self, base_damage: f32) -> f32 {
+        self.attack_animation_tick.store(10, Ordering::Relaxed);
+        let entity = self.get_entity();
+        entity
+            .world
+            .load()
+            .send_entity_status(entity, EntityStatus::StartAttacking, None);
+        entity.play_sound(Sound::EntityIronGolemAttack);
+        if base_damage as i32 > 0 {
+            base_damage * 0.5 + rand::random_range(0..base_damage as i32) as f32
+        } else {
+            base_damage
+        }
+    }
+
+    fn on_attack(&self, target: &dyn EntityBase) {
+        let resistance = target.get_living_entity().map_or(0.0, |living| {
+            living.get_attribute_value(&Attributes::KNOCKBACK_RESISTANCE)
+        });
+        let entity = target.get_entity();
+        let mut velocity = entity.velocity.load();
+        velocity.y += f64::from(0.4_f32) * (1.0 - resistance).max(0.0);
+        entity.set_velocity(velocity);
+    }
+
     fn mob_write_nbt(&self, nbt: &mut NbtCompound) {
         nbt.put_bool("PlayerCreated", self.is_player_created());
     }

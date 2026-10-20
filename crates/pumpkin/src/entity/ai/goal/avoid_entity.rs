@@ -13,7 +13,8 @@ const VERTICAL_RANGE: i32 = 7;
 
 pub struct AvoidEntityGoal {
     goal_control: Controls,
-    flee_type: &'static EntityType,
+    flee_type: Option<&'static EntityType>,
+    flee_filter: fn(&dyn Mob, &dyn EntityBase) -> bool,
     flee_distance: f64,
     slow_speed: f64,
     fast_speed: f64,
@@ -31,7 +32,8 @@ impl AvoidEntityGoal {
     ) -> Self {
         Self {
             goal_control: Controls::MOVE,
-            flee_type,
+            flee_type: Some(flee_type),
+            flee_filter: |_, _| true,
             flee_distance,
             slow_speed,
             fast_speed,
@@ -40,21 +42,46 @@ impl AvoidEntityGoal {
         }
     }
 
+    #[must_use]
+    pub fn with_filter(
+        flee_distance: f64,
+        slow_speed: f64,
+        fast_speed: f64,
+        filter: fn(&dyn Mob, &dyn EntityBase) -> bool,
+    ) -> Self {
+        let mut goal = Self::new(&EntityType::PLAYER, flee_distance, slow_speed, fast_speed);
+        goal.flee_type = None;
+        goal.flee_filter = filter;
+        goal
+    }
+
     fn find_threat(&self, mob: &dyn Mob) -> Option<Arc<dyn EntityBase>> {
         let entity = &mob.get_mob_entity().living_entity.entity;
         let pos = entity.pos.load();
         let world = entity.world.load();
 
-        if self.flee_type == &EntityType::PLAYER {
+        if self.flee_type == Some(&EntityType::PLAYER) {
             world
                 .get_nearest_player(pos, self.flee_distance, |player| {
                     EntityPredicate::ExceptCreativeOrSpectator.test(player.get_entity())
+                        && player.living_entity.is_alive()
+                        && (self.flee_filter)(mob, player.as_ref())
                 })
                 .map(|p| p as Arc<dyn EntityBase>)
         } else {
-            world.get_nearest_entity(pos, self.flee_distance, Some(&[self.flee_type]), |entity| {
-                EntityPredicate::ExceptCreativeOrSpectator.test(entity.get_entity())
-            })
+            let types = self.flee_type.map(|kind| [kind]);
+            world.get_nearest_entity(
+                pos,
+                self.flee_distance,
+                types.as_ref().map(<[_; 1]>::as_slice),
+                |entity| {
+                    EntityPredicate::ExceptCreativeOrSpectator.test(entity.get_entity())
+                        && entity
+                            .get_living_entity()
+                            .is_some_and(|living| living.is_alive())
+                        && (self.flee_filter)(mob, entity.as_ref())
+                },
+            )
         }
     }
 }

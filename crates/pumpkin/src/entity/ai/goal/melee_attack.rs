@@ -1,6 +1,7 @@
 use super::{Controls, Goal};
 
-use crate::entity::ai::pathfinder::NavigatorGoal;
+use crate::entity::EntityBase;
+use crate::entity::ai::pathfinder::path::Path;
 use crate::entity::mob::Mob;
 use crate::entity::predicate::EntityPredicate;
 use pumpkin_util::math::vector3::Vector3;
@@ -12,13 +13,10 @@ pub struct MeleeAttackGoal {
     goal_control: Controls,
     speed: f64,
     pause_when_mob_idle: bool,
-    //path: Path, TODO: add path when Navigation is implemented
-    #[expect(dead_code)]
-    target_location: Vector3<f64>,
+    path: Option<Path>,
     update_countdown_ticks: i32,
     pub cooldown: i32,
-    #[expect(dead_code)]
-    attack_interval_ticks: i32,
+    attack_handler: Option<fn(&dyn Mob, &dyn EntityBase, &mut Self)>,
     last_update_time: i64,
     last_target_position: Option<Vector3<f64>>,
 }
@@ -30,10 +28,10 @@ impl MeleeAttackGoal {
             goal_control: Controls::MOVE | Controls::LOOK,
             speed,
             pause_when_mob_idle,
-            target_location: Vector3::new(0.0, 0.0, 0.0),
+            path: None,
             update_countdown_ticks: 0,
             cooldown: 0,
-            attack_interval_ticks: 20,
+            attack_handler: None,
             last_update_time: 0,
             last_target_position: None,
         }
@@ -42,6 +40,28 @@ impl MeleeAttackGoal {
     #[must_use]
     pub fn get_max_cooldown(&self) -> i32 {
         self.get_tick_count(20)
+    }
+
+    #[must_use]
+    pub fn with_attack_handler(
+        mut self,
+        handler: fn(&dyn Mob, &dyn EntityBase, &mut Self),
+    ) -> Self {
+        self.attack_handler = Some(handler);
+        self
+    }
+
+    pub fn can_perform_attack(&self, mob: &dyn Mob, target: &dyn EntityBase) -> bool {
+        self.cooldown <= 0
+            && super::is_valid_attack_target(mob, target)
+            && mob.get_mob_entity().is_in_attack_range(target)
+            && mob.has_line_of_sight(target.get_entity())
+    }
+
+    pub fn perform_attack(&mut self, mob: &dyn Mob, target: &dyn EntityBase) {
+        self.cooldown = self.get_max_cooldown();
+        mob.get_mob_entity().living_entity.swing_hand();
+        mob.get_mob_entity().try_attack(mob, target);
     }
 }
 
@@ -59,11 +79,20 @@ impl Goal for MeleeAttackGoal {
         let Some(target) = target.as_ref() else {
             return false;
         };
-        if !target.get_entity().is_alive() {
+        if !super::is_valid_attack_target(mob, target.as_ref()) {
             return false;
         }
-        // TODO: add path when is implemented Navigation
-        true //TODO: modify that because if a path to the target not exists then call mob.is_in_attack_range(target)
+        self.path = mob
+            .get_mob_entity()
+            .navigator
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .create_path(
+                &mob.get_mob_entity().living_entity,
+                target.get_entity().pos.load(),
+                0,
+            );
+        self.path.is_some() || mob.get_mob_entity().is_in_attack_range(target.as_ref())
     }
 
     fn should_continue(&mut self, mob: &dyn Mob) -> bool {
@@ -72,7 +101,7 @@ impl Goal for MeleeAttackGoal {
         let Some(target) = target else {
             return false;
         };
-        if !target.get_entity().is_alive() {
+        if !super::is_valid_attack_target(mob, target.as_ref()) {
             return false;
         }
 
@@ -95,21 +124,16 @@ impl Goal for MeleeAttackGoal {
     fn start(&mut self, mob: &dyn Mob) {
         mob.get_mob_entity().set_attacking(true);
 
-        let target = mob.get_mob_entity().get_target().clone();
-        if let Some(target) = target {
-            let mut navigator = mob
-                .get_mob_entity()
-                .navigator
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            let target_pos = target.get_entity().pos.load();
-            navigator.set_progress(NavigatorGoal {
-                current_progress: mob.get_entity().pos.load(),
-                destination: target_pos,
-                speed: self.speed,
-            });
-            self.last_target_position = Some(target_pos);
-        }
+        mob.get_mob_entity()
+            .navigator
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .move_to_path(
+                self.path.take(),
+                self.speed,
+                &mob.get_mob_entity().living_entity,
+            );
+        self.last_target_position = None;
         self.update_countdown_ticks = 0;
         self.cooldown = 0;
     }
@@ -169,11 +193,13 @@ impl Goal for MeleeAttackGoal {
                 .navigator
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
-            navigator.set_progress(NavigatorGoal {
-                current_progress: mob_pos,
-                destination: current_target_pos,
-                speed: self.speed,
-            });
+            let moved = navigator.move_to_coords(
+                current_target_pos.x,
+                current_target_pos.y,
+                current_target_pos.z,
+                self.speed,
+                &mob.get_mob_entity().living_entity,
+            );
             self.last_target_position = Some(current_target_pos);
             self.update_countdown_ticks = 4 + mob.get_random().random_range(0..7);
             if dist_sq > 1024.0 {
@@ -181,20 +207,18 @@ impl Goal for MeleeAttackGoal {
             } else if dist_sq > 256.0 {
                 self.update_countdown_ticks += 5;
             }
-            // TODO: add 15 more ticks when the path request fails.
+            if !moved {
+                self.update_countdown_ticks += 15;
+            }
             self.update_countdown_ticks = self.get_tick_count(self.update_countdown_ticks);
         }
 
         self.cooldown = (self.cooldown - 1).max(0);
 
-        if self.cooldown <= 0
-            && mob.get_mob_entity().is_in_attack_range(target.as_ref())
-            && mob.has_line_of_sight(target.get_entity())
-        {
-            self.cooldown = self.get_max_cooldown();
-            mob.get_mob_entity().living_entity.swing_hand();
-            mob.get_mob_entity()
-                .try_attack(mob.get_entity(), target.as_ref());
+        if let Some(handler) = self.attack_handler {
+            handler(mob, target.as_ref(), self);
+        } else if self.can_perform_attack(mob, target.as_ref()) {
+            self.perform_attack(mob, target.as_ref());
         }
     }
 

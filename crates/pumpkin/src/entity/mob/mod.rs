@@ -3,8 +3,8 @@ use crate::entity::ai::brain::Brain;
 use crate::entity::ai::brain::memory::PackedMemories;
 use crate::entity::ai::control::MoveControlTrait;
 use crate::entity::ai::control::look_control::LookControl;
-use crate::entity::ai::control::move_control::MoveControl;
 use crate::entity::ai::goal::goal_selector::GoalSelector;
+use crate::entity::ai::neutral::{self, AngryPlayerGoal, PersistentAnger, ResetUniversalAngerGoal};
 use crate::entity::ai::sensing::Sensing;
 use crate::entity::player::Player;
 use crate::entity::predicate::EntityPredicate;
@@ -67,6 +67,7 @@ pub mod silverfish;
 pub mod skeleton;
 pub mod slime;
 pub mod spider;
+pub mod sulfur_cube;
 pub mod vex;
 pub mod vindicator;
 pub mod warden;
@@ -86,6 +87,7 @@ pub struct MobEntity {
     pub sensing: std::sync::Mutex<Sensing>,
     pub move_control: std::sync::Mutex<Box<dyn MoveControlTrait>>,
     pub brain: std::sync::Mutex<Brain>,
+    pub anger: PersistentAnger,
     pub position_target: AtomicCell<BlockPos>,
     pub position_target_range: AtomicI32,
     pub love_ticks: AtomicI32,
@@ -165,16 +167,43 @@ impl MobEntity {
 
     #[must_use]
     pub fn new(entity: Entity) -> Self {
+        let kind = entity.entity_type;
+        let mut targets = GoalSelector::default();
+        if neutral::is_neutral(kind) {
+            let reset_priority = if kind == &EntityType::WOLF {
+                8
+            } else if kind == &EntityType::POLAR_BEAR {
+                5
+            } else if kind == &EntityType::IRON_GOLEM || kind == &EntityType::ENDERMAN {
+                4
+            } else {
+                3
+            };
+            targets.add_goal(reset_priority, Box::new(ResetUniversalAngerGoal::default()));
+            if kind != &EntityType::ENDERMAN {
+                let priority = if kind == &EntityType::WOLF {
+                    4
+                } else if kind == &EntityType::POLAR_BEAR || kind == &EntityType::IRON_GOLEM {
+                    3
+                } else {
+                    2
+                };
+                targets.add_goal(priority, Box::new(AngryPlayerGoal::default()));
+            }
+        }
         Self {
             living_entity: LivingEntity::new(entity),
             goals_selector: std::sync::Mutex::new(GoalSelector::default()),
-            target_selector: std::sync::Mutex::new(GoalSelector::default()),
+            target_selector: std::sync::Mutex::new(targets),
             navigator: std::sync::Mutex::new(Navigator::default()),
             target: std::sync::Mutex::new(None),
-            look_control: std::sync::Mutex::new(LookControl::default()),
+            look_control: std::sync::Mutex::new(LookControl::for_entity(kind)),
             sensing: std::sync::Mutex::new(Sensing::default()),
-            move_control: std::sync::Mutex::new(Box::new(MoveControl::default())),
+            move_control: std::sync::Mutex::new(crate::entity::ai::control::movement_controller(
+                kind,
+            )),
             brain: std::sync::Mutex::new(Brain::default()),
+            anger: PersistentAnger::default(),
             position_target: AtomicCell::new(BlockPos::ZERO),
             position_target_range: AtomicI32::new(-1),
             love_ticks: AtomicI32::new(0),
@@ -564,7 +593,7 @@ impl MobEntity {
     }
 
     pub fn try_attack(&self, caller: &dyn EntityBase, target: &dyn EntityBase) {
-        if self.living_entity.dead.load(Relaxed) {
+        if !self.living_entity.is_alive() {
             return;
         }
 
@@ -572,6 +601,9 @@ impl MobEntity {
             self.living_entity
                 .get_attribute_value(&Attributes::ATTACK_DAMAGE) as f32;
 
+        let attack_damage = caller
+            .get_mob()
+            .map_or(attack_damage, |mob| mob.prepare_melee_attack(attack_damage));
         let damaged = target.damage_with_context(
             target,
             attack_damage,
@@ -585,9 +617,13 @@ impl MobEntity {
             self.living_entity
                 .last_attacking_id
                 .store(target.get_entity().entity_id, Relaxed);
-            self.living_entity
-                .last_attack_time
-                .store(self.living_entity.entity.age.load(Relaxed), Relaxed);
+            self.living_entity.last_attack_time.store(
+                self.living_entity.entity.tick_count.load(Relaxed).max(1),
+                Relaxed,
+            );
+            if let Some(mob) = caller.get_mob() {
+                mob.on_attack(target);
+            }
         }
     }
 
@@ -767,6 +803,96 @@ impl MobEntity {
 }
 
 pub trait Mob: EntityBase + Send + Sync {
+    fn request_jump(&self) {
+        self.get_mob_entity()
+            .living_entity
+            .jumping
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    fn tick_jump_control(&self) {}
+
+    fn get_mob_jump_multiplier(&self) -> f64 {
+        1.0
+    }
+    fn on_jump(&self) {}
+
+    fn water_travel_parameters(&self) -> Option<(f64, f64, f64)> {
+        let kind = self.get_entity().entity_type;
+        let living = &self.get_mob_entity().living_entity;
+        if [
+            &EntityType::AXOLOTL,
+            &EntityType::FROG,
+            &EntityType::NAUTILUS,
+            &EntityType::ZOMBIE_NAUTILUS,
+        ]
+        .contains(&kind)
+        {
+            Some((living.ai_speed.load(), 0.9, 0.0))
+        } else if kind == &EntityType::DOLPHIN {
+            Some((
+                living.ai_speed.load(),
+                0.9,
+                if self.get_mob_entity().get_target().is_none() {
+                    -0.005
+                } else {
+                    0.0
+                },
+            ))
+        } else if [&EntityType::GUARDIAN, &EntityType::ELDER_GUARDIAN].contains(&kind) {
+            Some((
+                0.1,
+                0.9,
+                if self.is_navigator_idle() && self.get_mob_entity().get_target().is_none() {
+                    -0.005
+                } else {
+                    0.0
+                },
+            ))
+        } else {
+            None
+        }
+    }
+
+    fn flying_travel_speeds(&self) -> Option<(f64, f64, f64)> {
+        let kind = self.get_entity().entity_type;
+        if kind == &EntityType::ALLAY {
+            Some((
+                0.02,
+                0.02,
+                self.get_mob_entity().living_entity.ai_speed.load(),
+            ))
+        } else if kind == &EntityType::HAPPY_GHAST {
+            let speed = self
+                .get_mob_entity()
+                .living_entity
+                .get_attribute_value(&Attributes::FLYING_SPEED)
+                * 5.0
+                / 3.0;
+            Some((speed, speed, speed))
+        } else if kind == &EntityType::GHAST {
+            Some((0.02, 0.02, 0.02))
+        } else if kind == &EntityType::PHANTOM {
+            Some((0.02, 0.02, 0.2))
+        } else {
+            None
+        }
+    }
+
+    fn as_neutral(&self) -> Option<&PersistentAnger> {
+        neutral::is_neutral(self.get_entity().entity_type).then_some(&self.get_mob_entity().anger)
+    }
+
+    fn can_target_while_angry(&self) -> bool {
+        self.get_entity().entity_type != &EntityType::BEE
+            || (self
+                .cast_any()
+                .downcast_ref::<crate::entity::passive::bee::BeeEntity>()
+                .is_some_and(|bee| !bee.has_stung())
+                && self.get_mob_entity().anger.end_time.load(Relaxed)
+                    > self.get_entity().world.load().get_world_age())
+    }
+
     fn get_random(&self) -> rand::rngs::ThreadRng {
         rand::rng()
     }
@@ -916,6 +1042,10 @@ pub trait Mob: EntityBase + Send + Sync {
     fn on_damage(&self, _damage_type: DamageType, _source: Option<&dyn EntityBase>) {}
 
     fn on_attack(&self, _target: &dyn EntityBase) {}
+
+    fn prepare_melee_attack(&self, base_damage: f32) -> f32 {
+        base_damage
+    }
 
     fn on_eating_grass(&self) {}
 
@@ -1078,6 +1208,28 @@ pub trait Mob: EntityBase + Send + Sync {
 
     fn mob_write_nbt(&self, _nbt: &mut NbtCompound) {}
 
+    /// Species such as frogs lay eggs after breeding instead of spawning a baby.
+    fn create_breed_offspring(&self, world: &Arc<World>) -> Option<Arc<dyn EntityBase>> {
+        let entity = self.get_entity();
+        let baby = crate::entity::r#type::from_type(
+            entity.entity_type,
+            entity.pos.load(),
+            world,
+            uuid::Uuid::new_v4(),
+        );
+        baby.get_entity().set_age(-24000);
+        Some(baby)
+    }
+
+    /// The mate influences inheritable variants such as the rabbit coat.
+    fn create_breed_offspring_with_partner(
+        &self,
+        world: &Arc<World>,
+        _partner: &dyn Mob,
+    ) -> Option<Arc<dyn EntityBase>> {
+        self.create_breed_offspring(world)
+    }
+
     fn mob_read_nbt(&self, _nbt: &NbtCompound) {}
 
     /// Drops a target the mob is not allowed to attack, such as a creative player.
@@ -1095,9 +1247,14 @@ pub trait Mob: EntityBase + Send + Sync {
         let mob = self.get_mob_entity();
         let target = self.as_valid_target(target);
         let target_id = target.as_ref().map(|t| t.get_entity().entity_id);
-        *mob.target
+        let mut previous = mob
+            .target
             .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner) = target;
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let had_target = previous.is_some();
+        *previous = target;
+        drop(previous);
+        self.on_target_changed(had_target, target_id.is_some());
         let world = mob.living_entity.entity.world.load_full();
         let entity_id = mob.living_entity.entity.entity_id;
         if let Some(server) = world.server.upgrade() {
@@ -1108,6 +1265,8 @@ pub trait Mob: EntityBase + Send + Sync {
             server.plugin_manager.fire_blocking(&server, &mut event);
         }
     }
+
+    fn on_target_changed(&self, _had_target: bool, _has_target: bool) {}
 
     fn mob_interact(&self, player: &Arc<Player>, item_stack: &mut ItemStack) -> bool {
         self.get_mob_entity().mob_interact(player, item_stack)
@@ -1338,8 +1497,11 @@ impl<T: Mob + Send + 'static> EntityBase for T {
 
         self.mob_tick(caller);
 
-        if !mob_entity.is_no_ai() {
-            let age = mob_entity.living_entity.entity.age.load(Relaxed);
+        if !mob_entity.is_no_ai() && mob_entity.living_entity.is_alive() {
+            if self.get_entity().entity_type != &EntityType::RABBIT {
+                mob_entity.living_entity.jumping.store(false, Relaxed);
+            }
+            let age = mob_entity.living_entity.entity.tick_count.load(Relaxed);
             let entity_id = mob_entity.living_entity.entity.entity_id;
 
             mob_entity
@@ -1394,7 +1556,7 @@ impl<T: Mob + Send + 'static> EntityBase for T {
                 std::mem::take(&mut *guard)
             };
 
-            navigator.tick(&mob_entity.living_entity);
+            navigator.tick(self);
 
             {
                 *mob_entity
@@ -1405,26 +1567,61 @@ impl<T: Mob + Send + 'static> EntityBase for T {
 
             self.custom_server_ai_step(caller);
 
-            // Controllers are synchronous, so we can just use normal blocks
+            // Java ticks MoveControl before LookControl and JumpControl.
             {
-                let mut look_control = mob_entity
-                    .look_control
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner);
-                look_control.tick(self);
-            };
-
-            {
-                let mut move_control = mob_entity
+                let mut controller = mob_entity
                     .move_control
                     .lock()
                     .unwrap_or_else(std::sync::PoisonError::into_inner);
-                move_control.tick(self);
-            };
+                controller.tick(self);
+            }
+            {
+                let mut controller = mob_entity
+                    .look_control
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                controller.tick(self);
+            }
+            self.tick_jump_control();
+        } else {
+            // Goal stop hooks release navigation and resources such as chest viewers.
+            for selector in [&mob_entity.goals_selector, &mob_entity.target_selector] {
+                let mut goals = std::mem::take(
+                    &mut *selector
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner),
+                );
+                goals.stop_all(self);
+                *selector
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner) = goals;
+            }
+            mob_entity
+                .navigator
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .stop();
+            mob_entity
+                .living_entity
+                .movement_input
+                .store(Vector3::new(0.0, 0.0, 0.0));
         }
 
+        if mob_entity.is_no_ai() {
+            mob_entity.living_entity.set_ai_speed(0.0);
+            mob_entity.living_entity.jumping.store(false, Relaxed);
+        }
         mob_entity.living_entity.tick(caller, server);
         self.post_tick();
+
+        if let Some(anger) = self.as_neutral() {
+            let kind = self.get_entity().entity_type;
+            if !mob_entity.is_no_ai()
+                || (kind != &EntityType::BEE && kind != &EntityType::ZOMBIFIED_PIGLIN)
+            {
+                anger.update(self);
+            }
+        }
 
         // --- Packet logic remains the same ---
         let entity = &mob_entity.living_entity.entity;
@@ -1492,7 +1689,7 @@ impl<T: Mob + Send + 'static> EntityBase for T {
             cause,
         );
         if damaged {
-            self.on_damage(damage_type, source);
+            self.on_damage(damage_type, cause.or(source));
         }
         damaged
     }
@@ -1560,6 +1757,9 @@ impl<T: Mob + Send + 'static> EntityBase for T {
             tamable.write_tamable_nbt(nbt);
         }
         self.mob_write_nbt(nbt);
+        if let Some(anger) = self.as_neutral() {
+            anger.write_nbt(nbt);
+        }
     }
 
     fn read_custom_nbt(&self, nbt: &NbtCompound) {
@@ -1582,6 +1782,9 @@ impl<T: Mob + Send + 'static> EntityBase for T {
             tamable.read_tamable_nbt(nbt);
         }
         self.mob_read_nbt(nbt);
+        if let Some(anger) = self.as_neutral() {
+            anger.read_nbt(self, nbt);
+        }
     }
 
     fn get_gravity(&self) -> f64 {

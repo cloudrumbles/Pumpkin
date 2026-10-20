@@ -67,11 +67,13 @@ impl JukeboxBlock {
     fn stop_playing(block: &Block, position: &BlockPos, world: &Arc<World>) {
         Self::set_record_state(false, block, position, world);
         world.sync_world_event(WorldEvent::SoundStopJukeboxSong, *position, 0);
+        world.emit_game_event("jukebox_stop_play", position.to_centered_f64());
     }
 
     /// Starts playing music
     fn start_playing(position: &BlockPos, world: &Arc<World>, song_id: u32) {
         world.sync_world_event(WorldEvent::SoundPlayJukeboxSong, *position, song_id as i32);
+        world.emit_game_event("jukebox_play", position.to_centered_f64());
     }
 }
 

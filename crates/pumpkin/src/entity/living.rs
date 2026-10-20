@@ -26,7 +26,6 @@ use super::experience_orb::ExperienceOrbEntity;
 use super::{Entity, EntityBase, NBTStorageInit};
 use crate::block::OnLandedUponArgs;
 use crate::entity::NBTStorage;
-use crate::entity::ageable::AgeableMob;
 use crate::entity::attributes::AttributeInstance;
 use crate::entity::attributes::Modifier;
 use crate::entity::attributes::ModifierOperation;
@@ -97,6 +96,10 @@ pub struct LivingEntity {
     pub entity_equipment: Arc<std::sync::Mutex<EntityEquipment>>,
     pub equipment_drop_chances: Arc<std::sync::Mutex<FxHashMap<EquipmentSlot, f32>>>,
     pub movement_input: AtomicCell<Vector3<f64>>,
+    /// Speed chosen by AI controls, separate from the movement attribute.
+    pub ai_speed: AtomicCell<f64>,
+    /// Long jumps retain horizontal momentum and apply gravity without air drag.
+    pub discard_friction: AtomicBool,
     pub equipment_slots: Arc<FxHashMap<usize, EquipmentSlot>>,
 
     pub jumping: AtomicBool,
@@ -208,6 +211,12 @@ fn is_allowed_by_team_rules(
         || same_team
 }
 
+/// Java 26.3 applies friction modifiers to the amount of velocity lost, not
+/// to the retained velocity. A modifier of zero therefore removes friction.
+fn modified_friction(retained_velocity: f64, modifier: f64) -> f64 {
+    (1.0 - (1.0 - retained_velocity) * modifier).clamp(0.0, 1.0)
+}
+
 impl LivingEntity {
     const USING_ITEM_FLAG: u8 = 1;
     const OFF_HAND_ACTIVE_FLAG: u8 = 2;
@@ -230,11 +239,8 @@ impl LivingEntity {
         entity_type.death_sound.unwrap_or(Sound::EntityGenericDeath)
     }
 
-    fn get_pitch(&self) -> f32 {
-        let is_baby = self
-            .get_mob()
-            .and_then(|x| x.as_ageable())
-            .is_some_and(AgeableMob::is_baby);
+    pub fn get_pitch(&self) -> f32 {
+        let is_baby = self.entity.age.load(Relaxed) < 0;
 
         let mut rng = rand::rng();
         if is_baby {
@@ -284,6 +290,7 @@ impl LivingEntity {
             equipment_drop_chances: Arc::new(std::sync::Mutex::new(FxHashMap::default())),
             equipment_slots: Arc::new(build_equipment_slots()),
             jumping: AtomicBool::new(false),
+            discard_friction: AtomicBool::new(false),
             jumping_cooldown: AtomicU8::new(0),
             climbing: AtomicBool::new(false),
             climbing_pos: AtomicCell::new(None),
@@ -299,6 +306,7 @@ impl LivingEntity {
             last_hurt_by_mob_id: AtomicI32::new(0),
             last_hurt_by_mob_time: AtomicI64::new(0),
             movement_input: AtomicCell::new(Vector3::default()),
+            ai_speed: AtomicCell::new(0.0),
             water_movement_speed_multiplier,
             last_block_pos: AtomicCell::new(None),
             equipment_attribute_modifier_ids: std::sync::Mutex::new(FxHashMap::default()),
@@ -757,8 +765,15 @@ impl LivingEntity {
         false
     }
 
+    pub fn is_alive(&self) -> bool {
+        self.entity.is_alive() && self.health.load() > 0.0 && !self.dead.load(Relaxed)
+    }
+
     pub fn heal(&self, additional_health: f32) {
         assert!(additional_health > 0.0);
+        if !self.is_alive() {
+            return;
+        }
         let mut event =
             crate::plugin::api::events::entity::entity_regain_health::EntityRegainHealthEvent::new(
                 self.entity.entity_id,
@@ -1288,6 +1303,9 @@ impl LivingEntity {
     }
 
     fn get_effective_gravity(&self, caller: &dyn EntityBase) -> f64 {
+        if self.entity.has_no_gravity() {
+            return 0.0;
+        }
         let final_gravity = caller.get_gravity();
 
         if self.entity.velocity.load().y <= 0.0 && self.has_effect(&StatusEffect::SLOW_FALLING) {
@@ -1331,6 +1349,22 @@ impl LivingEntity {
         world.broadcast_editioned(&je_packet, &be_packet);
     }
 
+    pub fn set_ai_speed(&self, speed: f64) {
+        let speed = f64::from(speed as f32);
+        self.ai_speed.store(speed);
+        let mut input = self.movement_input.load();
+        input.z = speed;
+        self.movement_input.store(input);
+    }
+
+    fn movement_speed(&self, caller: &dyn EntityBase) -> f64 {
+        if caller.get_mob().is_some() {
+            self.ai_speed.load()
+        } else {
+            self.get_attribute_value(&Attributes::MOVEMENT_SPEED)
+        }
+    }
+
     fn tick_movement(&self, caller: &dyn EntityBase) {
         if self.jumping_cooldown.load(Relaxed) != 0 {
             self.jumping_cooldown.fetch_sub(1, Relaxed);
@@ -1339,16 +1373,6 @@ impl LivingEntity {
         let should_swim_in_fluids = caller.get_player().is_none_or(|player| !player.is_flying());
 
         self.entity.check_zero_velo();
-
-        let mut movement_input = self.movement_input.load();
-
-        movement_input.x *= 0.98;
-
-        movement_input.z *= 0.98;
-
-        self.movement_input.store(movement_input);
-
-        // TODO: Tick AI
 
         if self.jumping.load(SeqCst) && should_swim_in_fluids {
             let in_lava = self.entity.touching_lava.load(SeqCst);
@@ -1376,7 +1400,7 @@ impl LivingEntity {
             } else if (on_ground || in_water && fluid_height <= swim_height)
                 && self.jumping_cooldown.load(SeqCst) == 0
             {
-                self.jump();
+                self.jump(caller);
 
                 self.jumping_cooldown.store(10, SeqCst);
             }
@@ -1390,20 +1414,32 @@ impl LivingEntity {
             self.fall_distance.store(0.0);
         }
 
-        let touching_water = self.entity.touching_water.load(SeqCst);
-
-        // Strider is the only entity that has canWalkOnFluid = false
-
-        if (touching_water || self.entity.touching_lava.load(SeqCst))
-            && should_swim_in_fluids
-            && self.entity.entity_type != &EntityType::STRIDER
+        // A NoAI mob still receives environmental effects and collisions,
+        // but LivingEntity.aiStep does not simulate its travel.
+        if caller
+            .get_mob()
+            .is_none_or(|mob| !mob.get_mob_entity().is_no_ai())
         {
-            self.travel_in_fluid(caller, touching_water);
-        } else {
-            // TODO: Gliding
+            let touching_water = self.entity.touching_water.load(SeqCst);
 
-            self.travel_in_air(caller);
+            // Strider is the only entity that has canWalkOnFluid = false
+
+            if (touching_water || self.entity.touching_lava.load(SeqCst))
+                && should_swim_in_fluids
+                && self.entity.entity_type != &EntityType::STRIDER
+            {
+                self.travel_in_fluid(caller, touching_water);
+            } else {
+                // TODO: Gliding
+
+                self.travel_in_air(caller);
+            }
         }
+
+        let mut movement_input = self.movement_input.load();
+        movement_input.x *= 0.98;
+        movement_input.z *= 0.98;
+        self.movement_input.store(movement_input);
 
         let suffocating = self.entity.tick_block_collisions(caller);
 
@@ -1465,15 +1501,22 @@ impl LivingEntity {
             return;
         }
 
+        let air_drag = modified_friction(
+            0.91,
+            self.get_attribute_value(&Attributes::AIR_DRAG_MODIFIER),
+        );
         let friction = if self.entity.on_ground.load(Relaxed) {
-            f64::from(
-                self.entity
-                    .get_block_with_y_offset(0.500_001)
-                    .1
-                    .slipperiness,
-            ) * 0.91
+            modified_friction(
+                f64::from(
+                    self.entity
+                        .get_block_with_y_offset(0.500_001)
+                        .1
+                        .slipperiness,
+                ),
+                self.get_attribute_value(&Attributes::FRICTION_MODIFIER),
+            ) * air_drag
         } else {
-            0.91
+            air_drag
         };
 
         velo.x *= friction;
@@ -1484,30 +1527,45 @@ impl LivingEntity {
     }
 
     fn travel_in_air(&self, caller: &dyn EntityBase) {
-        // applyMovementInput
+        if let Some((_, _, speed)) = caller.get_mob().and_then(|mob| mob.flying_travel_speeds()) {
+            self.entity
+                .update_velocity_from_input(self.movement_input.load(), speed);
+            self.make_move(caller);
+            self.entity
+                .velocity
+                .store(self.entity.velocity.load() * 0.91);
+            return;
+        }
+        let effective_speed = self.movement_speed(caller);
 
-        let effective_speed = self.get_attribute_value(&Attributes::MOVEMENT_SPEED);
-
+        let drag_modifier = self.get_attribute_value(&Attributes::AIR_DRAG_MODIFIER);
+        let air_drag = modified_friction(0.91, drag_modifier);
         let (speed, friction) = if self.entity.on_ground.load(Relaxed) {
             // getVelocityAffectingPos
 
-            let slipperiness = f64::from(
-                self.entity
-                    .get_block_with_y_offset(0.500_001)
-                    .1
-                    .slipperiness,
+            let slipperiness = modified_friction(
+                f64::from(
+                    self.entity
+                        .get_block_with_y_offset(0.500_001)
+                        .1
+                        .slipperiness,
+                ),
+                self.get_attribute_value(&Attributes::FRICTION_MODIFIER),
             );
 
-            let speed =
-                effective_speed * 0.216_000_02 / (slipperiness * slipperiness * slipperiness);
+            let speed = if slipperiness > 0.6 {
+                effective_speed * 0.216_000_02 / slipperiness.powi(3)
+            } else {
+                effective_speed
+            };
 
-            (speed, slipperiness * 0.91)
+            (speed, slipperiness * air_drag)
         } else {
             let speed = caller
                 .get_player()
                 .map_or(0.02, super::player::Player::get_off_ground_speed);
 
-            (speed, 0.91)
+            (speed, air_drag)
         };
 
         self.entity
@@ -1543,29 +1601,55 @@ impl LivingEntity {
             // if below world's bottom y then -0.1, else 0.0
         }
 
-        // If entity has no drag: store velo and return
+        if self.discard_friction.load(Relaxed) {
+            self.entity.velocity.store(velo);
+            return;
+        }
 
         velo.x *= friction;
 
         velo.z *= friction;
 
-        velo.y *= caller.get_y_velocity_drag().unwrap_or_else(|| {
-            if caller.is_flutterer() {
-                friction
-            } else {
-                0.98
-            }
-        });
+        let vertical_drag = caller
+            .get_y_velocity_drag()
+            .unwrap_or_else(|| if caller.is_flutterer() { 0.91 } else { 0.98 });
+        velo.y *= modified_friction(vertical_drag, drag_modifier);
 
         self.entity.velocity.store(velo);
     }
 
     fn travel_in_fluid(&self, caller: &dyn EntityBase, water: bool) {
         let movement_input = self.movement_input.load();
+        if let Some((water_speed, lava_speed, _)) =
+            caller.get_mob().and_then(|mob| mob.flying_travel_speeds())
+        {
+            self.entity.update_velocity_from_input(
+                movement_input,
+                if water { water_speed } else { lava_speed },
+            );
+            self.make_move(caller);
+            self.entity
+                .velocity
+                .store(self.entity.velocity.load() * if water { 0.8 } else { 0.5 });
+            return;
+        }
+        if water
+            && let Some((speed, drag, drift)) = caller
+                .get_mob()
+                .and_then(|mob| mob.water_travel_parameters())
+        {
+            self.entity
+                .update_velocity_from_input(movement_input, speed);
+            self.make_move(caller);
+            self.entity
+                .velocity
+                .store(self.entity.velocity.load() * drag + Vector3::new(0.0, drift, 0.0));
+            return;
+        }
 
         let falling = self.entity.velocity.load().y <= 0.0;
         let gravity = self.get_effective_gravity(caller);
-        let effective_speed = self.get_attribute_value(&Attributes::MOVEMENT_SPEED);
+        let effective_speed = self.movement_speed(caller);
 
         if water {
             let mut friction = if self.entity.sprinting.load(Relaxed) {
@@ -1779,8 +1863,11 @@ impl LivingEntity {
         }
     }
 
-    fn jump(&self) {
-        let jump = self.get_jump_velocity(1.0);
+    fn jump(&self, caller: &dyn EntityBase) {
+        let multiplier = caller
+            .get_mob()
+            .map_or(1.0, |mob| mob.get_mob_jump_multiplier());
+        let jump = self.get_jump_velocity(multiplier);
 
         if jump <= 1.0e-5 {
             return;
@@ -1800,6 +1887,9 @@ impl LivingEntity {
         self.entity.velocity.store(velo);
 
         self.entity.velocity_dirty.store(true, SeqCst);
+        if let Some(mob) = caller.get_mob() {
+            mob.on_jump();
+        }
     }
 
     fn get_jump_velocity(&self, mut strength: f64) -> f64 {
@@ -2291,7 +2381,7 @@ impl LivingEntity {
             let Ok(mut effects) = self.active_effects.try_lock() else {
                 return;
             };
-            let entity_age = self.entity.age.load(Relaxed);
+            let entity_age = self.entity.tick_count.load(Relaxed);
             for effect in effects.values_mut() {
                 if effect.duration == 0 {
                     effects_to_remove.push(effect.effect_type);
@@ -2684,7 +2774,10 @@ impl LivingEntity {
     }
 
     pub fn read_living_nbt_non_mut(&self, nbt: &NbtCompound) {
-        self.health.store(nbt.get_float("Health").unwrap_or(20.0));
+        // Summon data and bucket occupants may omit Health. Vanilla starts such
+        // entities at their own maximum, not the player's twenty health points.
+        let health = nbt.get_float("Health").unwrap_or(self.get_max_health());
+        self.health.store(health.clamp(0.0, self.get_max_health()));
 
         if let Some(equipment) = nbt.get_compound("equipment") {
             let mut guard = self
@@ -3234,7 +3327,7 @@ impl LivingEntity {
                 self.last_attacker_id
                     .store(attacker.get_entity().entity_id, Relaxed);
                 self.last_attacked_time
-                    .store(self.entity.age.load(Relaxed), Relaxed);
+                    .store(self.entity.tick_count.load(Relaxed).max(1), Relaxed);
             }
         }
 
@@ -3267,7 +3360,7 @@ impl LivingEntity {
                 let attacker_id = attacker.get_entity().entity_id;
                 self.last_attacker_id.store(attacker_id, Relaxed);
                 self.last_attacked_time
-                    .store(self.entity.age.load(Relaxed), Relaxed);
+                    .store(self.entity.tick_count.load(Relaxed).max(1), Relaxed);
 
                 let current_tick = world.level_info.load().day_time;
                 if attacker.get_player().is_some() {
@@ -3316,6 +3409,16 @@ impl LivingEntity {
             }
             self.on_death(damage_type, source, cause);
         }
+
+        world.emit_game_event_with_source(
+            if new_health <= 0.0 {
+                "entity_die"
+            } else {
+                "entity_damage"
+            },
+            self.entity.pos.load(),
+            Some(&self.entity),
+        );
 
         true
     }
@@ -3429,6 +3532,28 @@ impl EntityBase for LivingEntity {
 
         let current_block_pos = self.entity.block_pos.load();
         if is_alive && self.last_block_pos.load() != Some(current_block_pos) {
+            if let Some(previous) = self.last_block_pos.load() {
+                let dx = (i64::from(previous.0.x) - i64::from(current_block_pos.0.x)).abs();
+                let dz = (i64::from(previous.0.z) - i64::from(current_block_pos.0.z)).abs();
+                let wet = self.entity.touching_water.load(Relaxed);
+                if dx + dz > 0
+                    && dx + dz <= 2
+                    && (wet || self.entity.on_ground.load(Relaxed))
+                    && !self.entity.is_silent()
+                {
+                    let world = self.entity.world.load();
+                    if !world
+                        .get_block(&current_block_pos.down())
+                        .has_tag(&tag::Block::MINECRAFT_OCCLUDES_VIBRATION_SIGNALS)
+                    {
+                        world.emit_game_event_with_source(
+                            if wet { "swim" } else { "step" },
+                            self.entity.pos.load(),
+                            Some(&self.entity),
+                        );
+                    }
+                }
+            }
             self.last_block_pos.store(Some(current_block_pos));
             self.on_changed_block(caller, current_block_pos);
         }

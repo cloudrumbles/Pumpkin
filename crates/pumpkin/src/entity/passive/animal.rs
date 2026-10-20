@@ -89,12 +89,19 @@ pub trait Animal: Mob {
 
             if age < 0 {
                 item_stack.decrement_unless_creative(player.gamemode.load(), 1);
-                let speedup = (-age / 10).max(1);
-                mob_entity
-                    .living_entity
-                    .entity
-                    .age
-                    .fetch_add(speedup, std::sync::atomic::Ordering::Relaxed);
+                // Baby feeding advances ten percent of the remaining growth
+                // time using the ageable hook, including forced-age state and
+                // updated client metadata when it crosses into adulthood.
+                if let Some(ageable) = self.as_ageable() {
+                    let seconds = (-age / 200).max(1);
+                    ageable.age_up(seconds, true);
+                } else {
+                    mob_entity
+                        .living_entity
+                        .entity
+                        .age
+                        .fetch_add((-age / 10).max(1), std::sync::atomic::Ordering::Relaxed);
+                }
 
                 let entity = &mob_entity.living_entity.entity;
                 let world = entity.world.load();

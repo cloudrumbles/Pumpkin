@@ -19,6 +19,7 @@ pub struct TrackTargetGoal {
     check_can_navigate_cooldown: i32,
     time_without_visibility: i32,
     pub max_time_without_visibility: i32,
+    pub range_multiplier: f64,
     /// Fallback target, used while the mob's own target is cleared.
     target_mob: Option<Arc<dyn EntityBase>>,
 }
@@ -35,6 +36,7 @@ impl TrackTargetGoal {
             check_can_navigate_cooldown: 0,
             time_without_visibility: 0,
             max_time_without_visibility: 60,
+            range_multiplier: 1.0,
             target_mob: None,
         }
     }
@@ -53,10 +55,21 @@ impl TrackTargetGoal {
         self.target_mob = target;
     }
 
-    fn can_navigate_to_entity(&mut self, mob: &dyn Mob) -> bool {
+    fn can_navigate_to_entity(&mut self, mob: &dyn Mob, target: &dyn EntityBase) -> bool {
         self.check_can_navigate_cooldown = to_goal_ticks(10 + mob.get_random().random_range(0..5));
-        // TODO: after implementing path
-        false
+        let target_pos = target.get_entity().pos.load();
+        let path = mob
+            .get_mob_entity()
+            .navigator
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .create_path(&mob.get_mob_entity().living_entity, target_pos, 0);
+        path.and_then(|path| path.get_end_node().copied())
+            .is_some_and(|end| {
+                let dx = f64::from(end.pos.0.x) - target_pos.x.floor();
+                let dz = f64::from(end.pos.0.z) - target_pos.z.floor();
+                dx * dx + dz * dz <= 2.25
+            })
     }
 
     const fn remembers_visible_target(&mut self, has_line_of_sight: bool) -> bool {
@@ -87,7 +100,9 @@ impl TrackTargetGoal {
             return false;
         }
 
-        // TODO: isInPositionTargetRange (isWithinHome in Java) check
+        if !mob_entity.is_in_position_target_range_pos(&target.get_entity().block_pos.load()) {
+            return false;
+        }
 
         if self.check_can_navigate {
             self.check_can_navigate_cooldown -= 1;
@@ -96,7 +111,7 @@ impl TrackTargetGoal {
             }
 
             if self.can_navigate_flag == UNSET {
-                self.can_navigate_flag = if self.can_navigate_to_entity(mob) {
+                self.can_navigate_flag = if self.can_navigate_to_entity(mob, target) {
                     CAN_TRACK
                 } else {
                     CANNOT_TRACK
@@ -123,7 +138,7 @@ impl Goal for TrackTargetGoal {
             return false;
         };
 
-        if !mob.can_attack(target) {
+        if !super::is_valid_attack_target(mob, target_base.as_ref()) {
             return false;
         }
 
@@ -142,7 +157,8 @@ impl Goal for TrackTargetGoal {
         // Get follow range attribute value and check if target is within range
         let follow_range = mob_entity
             .living_entity
-            .get_attribute_value(&Attributes::FOLLOW_RANGE);
+            .get_attribute_value(&Attributes::FOLLOW_RANGE)
+            * self.range_multiplier;
 
         if dist_sq > follow_range * follow_range {
             return false;

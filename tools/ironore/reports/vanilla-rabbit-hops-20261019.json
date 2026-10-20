@@ -1,0 +1,30 @@
+{
+  "backend": "vanilla",
+  "target_version": "26.3",
+  "expected_data_version": 5023,
+  "vanilla_jar_sha1": "33680f5f2ac32864d6d7cf5e56a705fdb3e05f4c",
+  "observations": [
+    {
+      "name": "rabbit_hops_under_pursuit",
+      "passed": true,
+      "detail": "observed expected behavior"
+    },
+    {
+      "name": "rabbit_eats_mature_carrots",
+      "passed": false,
+      "detail": "rabbit did not lower the age of any mature carrot crop"
+    },
+    {
+      "name": "clean_server_stop",
+      "passed": true,
+      "detail": "exit code 0"
+    }
+  ],
+  "source_report_sha256": "853da3e8f64a794be8cf7d9dacaf83cd9783563fd6f142f8ca0e9d13c7579988",
+  "source_report_command_count": 429,
+  "qualifications": {
+    "pass": 2,
+    "fail": 1
+  },
+  "scope_note": "scenario coverage only, not complete mob parity"
+}

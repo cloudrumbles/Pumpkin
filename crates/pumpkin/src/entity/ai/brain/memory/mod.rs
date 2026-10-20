@@ -500,7 +500,10 @@ mod tests {
         let mut store = MemoryStore::default();
         store.register(types::DANCING.id());
         store.set(types::DANCING, true);
-        assert!(store.pack().0.is_empty());
+        assert_eq!(
+            store.pack().0,
+            [] as [(MemoryModuleId, NbtTag, Option<i64>); 0]
+        );
     }
 
     #[test]
@@ -598,6 +601,9 @@ mod tests {
         memories.put_compound("minecraft:dancing", memory);
         let mut brain = NbtCompound::new();
         brain.put_compound("memories", memories);
-        assert!(PackedMemories::from_nbt(&brain).0.is_empty());
+        assert_eq!(
+            PackedMemories::from_nbt(&brain).0,
+            [] as [(MemoryModuleId, NbtTag, Option<i64>); 0]
+        );
     }
 }

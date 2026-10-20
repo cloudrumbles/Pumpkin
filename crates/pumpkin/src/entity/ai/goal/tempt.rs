@@ -5,6 +5,7 @@ use crate::entity::EntityBase;
 use crate::entity::{ai::pathfinder::NavigatorGoal, mob::Mob, player::Player};
 use pumpkin_data::attributes::Attributes;
 use pumpkin_data::item::Item;
+use pumpkin_data::tag::{Tag, Taggable};
 use pumpkin_util::math::vector3::Vector3;
 
 const DEFAULT_STOP_DISTANCE: f64 = 2.5;
@@ -17,6 +18,7 @@ pub struct TemptGoal {
     goal_control: Controls,
     speed: f64,
     tempt_items: &'static [&'static Item],
+    tempt_tag: Option<&'static Tag>,
     can_scare: bool,
     stop_distance: f64,
     target_player: Option<Arc<Player>>,
@@ -44,6 +46,7 @@ impl TemptGoal {
             goal_control: Controls::MOVE | Controls::LOOK,
             speed,
             tempt_items,
+            tempt_tag: None,
             can_scare,
             stop_distance,
             target_player: None,
@@ -60,8 +63,21 @@ impl TemptGoal {
         self.running
     }
 
+    pub const fn set_can_scare(&mut self, can_scare: bool) {
+        self.can_scare = can_scare;
+    }
+
+    #[must_use]
+    pub fn with_tag(speed: f64, tag: &'static Tag, stop_distance: f64) -> Self {
+        let mut goal = Self::with_stop_distance(speed, &[], false, stop_distance);
+        goal.tempt_tag = Some(tag);
+        goal
+    }
+
     fn is_tempt_item(&self, stack: &pumpkin_data::item_stack::ItemStack) -> bool {
-        stack.item_count > 0 && self.tempt_items.iter().any(|i| i.id == stack.item.id)
+        stack.item_count > 0
+            && (self.tempt_items.iter().any(|i| i.id == stack.item.id)
+                || self.tempt_tag.is_some_and(|tag| stack.item.has_tag(tag)))
     }
 
     fn is_holding_tempt_item(&self, player: &Player) -> bool {

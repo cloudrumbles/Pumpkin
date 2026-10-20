@@ -1,0 +1,920 @@
+{
+  "backend": "vanilla",
+  "target_version": "26.3",
+  "expected_data_version": 5023,
+  "vanilla_jar_sha1": "33680f5f2ac32864d6d7cf5e56a705fdb3e05f4c",
+  "observations": [
+    {
+      "name": "no_ai_allay",
+      "passed": true,
+      "detail": "observed expected behavior"
+    },
+    {
+      "name": "no_ai_armadillo",
+      "passed": true,
+      "detail": "observed expected behavior"
+    },
+    {
+      "name": "no_ai_axolotl",
+      "passed": true,
+      "detail": "observed expected behavior"
+    },
+    {
+      "name": "no_ai_bat",
+      "passed": true,
+      "detail": "observed expected behavior"
+    },
+    {
+      "name": "no_ai_bee",
+      "passed": true,
+      "detail": "observed expected behavior"
+    },
+    {
+      "name": "no_ai_blaze",
+      "passed": true,
+      "detail": "observed expected behavior"
+    },
+    {
+      "name": "no_ai_bogged",
+      "passed": true,
+      "detail": "observed expected behavior"
+    },
+    {
+      "name": "no_ai_breeze",
+      "passed": true,
+      "detail": "observed expected behavior"
+    },
+    {
+      "name": "no_ai_camel",
+      "passed": true,
+      "detail": "observed expected behavior"
+    },
+    {
+      "name": "no_ai_camel_husk",
+      "passed": true,
+      "detail": "observed expected behavior"
+    },
+    {
+      "name": "no_ai_cat",
+      "passed": true,
+      "detail": "observed expected behavior"
+    },
+    {
+      "name": "no_ai_cave_spider",
+      "passed": true,
+      "detail": "observed expected behavior"
+    },
+    {
+      "name": "no_ai_chicken",
+      "passed": true,
+      "detail": "observed expected behavior"
+    },
+    {
+      "name": "no_ai_cod",
+      "passed": true,
+      "detail": "observed expected behavior"
+    },
+    {
+      "name": "no_ai_copper_golem",
+      "passed": true,
+      "detail": "observed expected behavior"
+    },
+    {
+      "name": "no_ai_cow",
+      "passed": true,
+      "detail": "observed expected behavior"
+    },
+    {
+      "name": "no_ai_creaking",
+      "passed": true,
+      "detail": "observed expected behavior"
+    },
+    {
+      "name": "no_ai_creeper",
+      "passed": true,
+      "detail": "observed expected behavior"
+    },
+    {
+      "name": "no_ai_dolphin",
+      "passed": true,
+      "detail": "observed expected behavior"
+    },
+    {
+      "name": "no_ai_donkey",
+      "passed": true,
+      "detail": "observed expected behavior"
+    },
+    {
+      "name": "no_ai_drowned",
+      "passed": true,
+      "detail": "observed expected behavior"
+    },
+    {
+      "name": "no_ai_elder_guardian",
+      "passed": true,
+      "detail": "observed expected behavior"
+    },
+    {
+      "name": "no_ai_enderman",
+      "passed": true,
+      "detail": "observed expected behavior"
+    },
+    {
+      "name": "no_ai_endermite",
+      "passed": true,
+      "detail": "observed expected behavior"
+    },
+    {
+      "name": "no_ai_ender_dragon",
+      "passed": true,
+      "detail": "observed expected behavior"
+    },
+    {
+      "name": "no_ai_evoker",
+      "passed": true,
+      "detail": "observed expected behavior"
+    },
+    {
+      "name": "no_ai_fox",
+      "passed": true,
+      "detail": "observed expected behavior"
+    },
+    {
+      "name": "no_ai_frog",
+      "passed": true,
+      "detail": "observed expected behavior"
+    },
+    {
+      "name": "no_ai_ghast",
+      "passed": true,
+      "detail": "observed expected behavior"
+    },
+    {
+      "name": "no_ai_happy_ghast",
+      "passed": true,
+      "detail": "observed expected behavior"
+    },
+    {
+      "name": "no_ai_giant",
+      "passed": true,
+      "detail": "observed expected behavior"
+    },
+    {
+      "name": "no_ai_glow_squid",
+      "passed": true,
+      "detail": "observed expected behavior"
+    },
+    {
+      "name": "no_ai_goat",
+      "passed": true,
+      "detail": "observed expected behavior"
+    },
+    {
+      "name": "no_ai_guardian",
+      "passed": true,
+      "detail": "observed expected behavior"
+    },
+    {
+      "name": "no_ai_hoglin",
+      "passed": true,
+      "detail": "observed expected behavior"
+    },
+    {
+      "name": "no_ai_horse",
+      "passed": true,
+      "detail": "observed expected behavior"
+    },
+    {
+      "name": "no_ai_husk",
+      "passed": true,
+      "detail": "observed expected behavior"
+    },
+    {
+      "name": "no_ai_illusioner",
+      "passed": true,
+      "detail": "observed expected behavior"
+    },
+    {
+      "name": "no_ai_iron_golem",
+      "passed": true,
+      "detail": "observed expected behavior"
+    },
+    {
+      "name": "no_ai_llama",
+      "passed": true,
+      "detail": "observed expected behavior"
+    },
+    {
+      "name": "no_ai_magma_cube",
+      "passed": true,
+      "detail": "observed expected behavior"
+    },
+    {
+      "name": "no_ai_mooshroom",
+      "passed": true,
+      "detail": "observed expected behavior"
+    },
+    {
+      "name": "no_ai_mule",
+      "passed": true,
+      "detail": "observed expected behavior"
+    },
+    {
+      "name": "no_ai_nautilus",
+      "passed": true,
+      "detail": "observed expected behavior"
+    },
+    {
+      "name": "no_ai_ocelot",
+      "passed": true,
+      "detail": "observed expected behavior"
+    },
+    {
+      "name": "no_ai_panda",
+      "passed": true,
+      "detail": "observed expected behavior"
+    },
+    {
+      "name": "no_ai_parched",
+      "passed": true,
+      "detail": "observed expected behavior"
+    },
+    {
+      "name": "no_ai_parrot",
+      "passed": true,
+      "detail": "observed expected behavior"
+    },
+    {
+      "name": "no_ai_phantom",
+      "passed": true,
+      "detail": "observed expected behavior"
+    },
+    {
+      "name": "no_ai_pig",
+      "passed": true,
+      "detail": "observed expected behavior"
+    },
+    {
+      "name": "no_ai_piglin",
+      "passed": true,
+      "detail": "observed expected behavior"
+    },
+    {
+      "name": "no_ai_piglin_brute",
+      "passed": true,
+      "detail": "observed expected behavior"
+    },
+    {
+      "name": "no_ai_pillager",
+      "passed": true,
+      "detail": "observed expected behavior"
+    },
+    {
+      "name": "no_ai_polar_bear",
+      "passed": true,
+      "detail": "observed expected behavior"
+    },
+    {
+      "name": "no_ai_pufferfish",
+      "passed": true,
+      "detail": "observed expected behavior"
+    },
+    {
+      "name": "no_ai_rabbit",
+      "passed": true,
+      "detail": "observed expected behavior"
+    },
+    {
+      "name": "no_ai_ravager",
+      "passed": true,
+      "detail": "observed expected behavior"
+    },
+    {
+      "name": "no_ai_salmon",
+      "passed": true,
+      "detail": "observed expected behavior"
+    },
+    {
+      "name": "no_ai_sheep",
+      "passed": true,
+      "detail": "observed expected behavior"
+    },
+    {
+      "name": "no_ai_shulker",
+      "passed": true,
+      "detail": "observed expected behavior"
+    },
+    {
+      "name": "no_ai_silverfish",
+      "passed": true,
+      "detail": "observed expected behavior"
+    },
+    {
+      "name": "no_ai_skeleton",
+      "passed": true,
+      "detail": "observed expected behavior"
+    },
+    {
+      "name": "no_ai_skeleton_horse",
+      "passed": true,
+      "detail": "observed expected behavior"
+    },
+    {
+      "name": "no_ai_slime",
+      "passed": true,
+      "detail": "observed expected behavior"
+    },
+    {
+      "name": "no_ai_sniffer",
+      "passed": true,
+      "detail": "observed expected behavior"
+    },
+    {
+      "name": "no_ai_snow_golem",
+      "passed": true,
+      "detail": "observed expected behavior"
+    },
+    {
+      "name": "no_ai_spider",
+      "passed": true,
+      "detail": "observed expected behavior"
+    },
+    {
+      "name": "no_ai_squid",
+      "passed": true,
+      "detail": "observed expected behavior"
+    },
+    {
+      "name": "no_ai_stray",
+      "passed": true,
+      "detail": "observed expected behavior"
+    },
+    {
+      "name": "no_ai_strider",
+      "passed": true,
+      "detail": "observed expected behavior"
+    },
+    {
+      "name": "no_ai_sulfur_cube",
+      "passed": true,
+      "detail": "observed expected behavior"
+    },
+    {
+      "name": "no_ai_tadpole",
+      "passed": true,
+      "detail": "observed expected behavior"
+    },
+    {
+      "name": "no_ai_trader_llama",
+      "passed": true,
+      "detail": "observed expected behavior"
+    },
+    {
+      "name": "no_ai_tropical_fish",
+      "passed": true,
+      "detail": "observed expected behavior"
+    },
+    {
+      "name": "no_ai_turtle",
+      "passed": true,
+      "detail": "observed expected behavior"
+    },
+    {
+      "name": "no_ai_vex",
+      "passed": true,
+      "detail": "observed expected behavior"
+    },
+    {
+      "name": "no_ai_villager",
+      "passed": true,
+      "detail": "observed expected behavior"
+    },
+    {
+      "name": "no_ai_vindicator",
+      "passed": true,
+      "detail": "observed expected behavior"
+    },
+    {
+      "name": "no_ai_wandering_trader",
+      "passed": true,
+      "detail": "observed expected behavior"
+    },
+    {
+      "name": "no_ai_warden",
+      "passed": true,
+      "detail": "observed expected behavior"
+    },
+    {
+      "name": "no_ai_witch",
+      "passed": true,
+      "detail": "observed expected behavior"
+    },
+    {
+      "name": "no_ai_wither",
+      "passed": true,
+      "detail": "observed expected behavior"
+    },
+    {
+      "name": "no_ai_wither_skeleton",
+      "passed": true,
+      "detail": "observed expected behavior"
+    },
+    {
+      "name": "no_ai_wolf",
+      "passed": true,
+      "detail": "observed expected behavior"
+    },
+    {
+      "name": "no_ai_zoglin",
+      "passed": true,
+      "detail": "observed expected behavior"
+    },
+    {
+      "name": "no_ai_zombie",
+      "passed": true,
+      "detail": "observed expected behavior"
+    },
+    {
+      "name": "no_ai_zombie_horse",
+      "passed": true,
+      "detail": "observed expected behavior"
+    },
+    {
+      "name": "no_ai_zombie_nautilus",
+      "passed": true,
+      "detail": "observed expected behavior"
+    },
+    {
+      "name": "no_ai_zombie_villager",
+      "passed": true,
+      "detail": "observed expected behavior"
+    },
+    {
+      "name": "no_ai_zombified_piglin",
+      "passed": true,
+      "detail": "observed expected behavior"
+    },
+    {
+      "name": "creative_target_veto_warden",
+      "passed": true,
+      "detail": "observed expected behavior"
+    },
+    {
+      "name": "creative_target_veto_guardian",
+      "passed": true,
+      "detail": "observed expected behavior"
+    },
+    {
+      "name": "creative_target_veto_vex",
+      "passed": true,
+      "detail": "observed expected behavior"
+    },
+    {
+      "name": "creative_target_veto_phantom",
+      "passed": true,
+      "detail": "observed expected behavior"
+    },
+    {
+      "name": "creative_target_veto_bee",
+      "passed": true,
+      "detail": "observed expected behavior"
+    },
+    {
+      "name": "guardian_beam_damages_squid",
+      "passed": true,
+      "detail": "observed expected behavior"
+    },
+    {
+      "name": "pufferfish_inflate_and_deflate",
+      "passed": false,
+      "detail": "puffer did not fully inflate: [09:40:54] [Server thread/INFO]: System chat: Pufferfish has the following entity data: {Motion: [-0.0434067598223357d, 0.02709031538968763d, 0.043301189481645005d], Brain: {memories: {}}, FromBucket: 0b, Health: 3.0f, Invulnerable: 0b, FallFlying: 0b, LeftHanded: 0b, fall_distance: 0.0d, Air: 300s, OnGround: 0b, PortalCooldown: 0, AbsorptionAmount: 0.0f, Rotation: [45.073807f, 0.0f], current_impulse_context_reset_grace_time: 0, PuffState: 1, Pos: [23.0586342500866d, 203.9838249794157d, 25.94281168899781d], DeathTime: 0s, Fire: 0s, CanPickUpLoot: 0b, attributes: [{id: \"minecraft:movement_speed\", base: 0.7d}], PersistenceRequired: 1b, UUID: [I; 1422451085, -424918567, -1675024504, 165332088], HurtTime: 0s, Tags: [\"puffer\", \"ai_fixture\"]}"
+    },
+    {
+      "name": "vex_limited_lifetime",
+      "passed": true,
+      "detail": "observed expected behavior"
+    },
+    {
+      "name": "tadpole_metamorphosis",
+      "passed": true,
+      "detail": "observed expected behavior"
+    },
+    {
+      "name": "tadpole_age_lock",
+      "passed": true,
+      "detail": "observed expected behavior"
+    },
+    {
+      "name": "turtle_lays_eggs",
+      "passed": true,
+      "detail": "observed expected behavior"
+    },
+    {
+      "name": "bee_nectar_delivery",
+      "passed": true,
+      "detail": "observed expected behavior"
+    },
+    {
+      "name": "axolotl_dry_out",
+      "passed": true,
+      "detail": "observed expected behavior"
+    },
+    {
+      "name": "frog_consumes_small_slime",
+      "passed": true,
+      "detail": "observed expected behavior"
+    },
+    {
+      "name": "neutral_anger_expires_bee",
+      "passed": true,
+      "detail": "observed expected behavior"
+    },
+    {
+      "name": "neutral_anger_expires_enderman",
+      "passed": true,
+      "detail": "observed expected behavior"
+    },
+    {
+      "name": "neutral_anger_expires_iron_golem",
+      "passed": true,
+      "detail": "observed expected behavior"
+    },
+    {
+      "name": "neutral_anger_expires_polar_bear",
+      "passed": true,
+      "detail": "observed expected behavior"
+    },
+    {
+      "name": "neutral_anger_expires_wolf",
+      "passed": true,
+      "detail": "observed expected behavior"
+    },
+    {
+      "name": "neutral_anger_expires_zombified_piglin",
+      "passed": true,
+      "detail": "observed expected behavior"
+    },
+    {
+      "name": "ground_zombie_routes_around_wall",
+      "passed": true,
+      "detail": "observed expected behavior"
+    },
+    {
+      "name": "water_cod_random_swim",
+      "passed": true,
+      "detail": "observed expected behavior"
+    },
+    {
+      "name": "flying_allay_wander",
+      "passed": true,
+      "detail": "observed expected behavior"
+    },
+    {
+      "name": "ageable_growth_armadillo",
+      "passed": true,
+      "detail": "observed expected behavior"
+    },
+    {
+      "name": "ageable_locked_armadillo",
+      "passed": true,
+      "detail": "observed expected behavior"
+    },
+    {
+      "name": "ageable_growth_axolotl",
+      "passed": true,
+      "detail": "observed expected behavior"
+    },
+    {
+      "name": "ageable_locked_axolotl",
+      "passed": true,
+      "detail": "observed expected behavior"
+    },
+    {
+      "name": "ageable_growth_bee",
+      "passed": true,
+      "detail": "observed expected behavior"
+    },
+    {
+      "name": "ageable_locked_bee",
+      "passed": true,
+      "detail": "observed expected behavior"
+    },
+    {
+      "name": "ageable_growth_camel",
+      "passed": true,
+      "detail": "observed expected behavior"
+    },
+    {
+      "name": "ageable_locked_camel",
+      "passed": true,
+      "detail": "observed expected behavior"
+    },
+    {
+      "name": "ageable_growth_cat",
+      "passed": true,
+      "detail": "observed expected behavior"
+    },
+    {
+      "name": "ageable_locked_cat",
+      "passed": true,
+      "detail": "observed expected behavior"
+    },
+    {
+      "name": "ageable_growth_chicken",
+      "passed": true,
+      "detail": "observed expected behavior"
+    },
+    {
+      "name": "ageable_locked_chicken",
+      "passed": true,
+      "detail": "observed expected behavior"
+    },
+    {
+      "name": "ageable_growth_cow",
+      "passed": true,
+      "detail": "observed expected behavior"
+    },
+    {
+      "name": "ageable_locked_cow",
+      "passed": true,
+      "detail": "observed expected behavior"
+    },
+    {
+      "name": "ageable_growth_dolphin",
+      "passed": true,
+      "detail": "observed expected behavior"
+    },
+    {
+      "name": "ageable_locked_dolphin",
+      "passed": true,
+      "detail": "observed expected behavior"
+    },
+    {
+      "name": "ageable_growth_donkey",
+      "passed": true,
+      "detail": "observed expected behavior"
+    },
+    {
+      "name": "ageable_locked_donkey",
+      "passed": true,
+      "detail": "observed expected behavior"
+    },
+    {
+      "name": "ageable_growth_fox",
+      "passed": true,
+      "detail": "observed expected behavior"
+    },
+    {
+      "name": "ageable_locked_fox",
+      "passed": true,
+      "detail": "observed expected behavior"
+    },
+    {
+      "name": "ageable_growth_happy_ghast",
+      "passed": true,
+      "detail": "observed expected behavior"
+    },
+    {
+      "name": "ageable_locked_happy_ghast",
+      "passed": true,
+      "detail": "observed expected behavior"
+    },
+    {
+      "name": "ageable_growth_glow_squid",
+      "passed": true,
+      "detail": "observed expected behavior"
+    },
+    {
+      "name": "ageable_locked_glow_squid",
+      "passed": true,
+      "detail": "observed expected behavior"
+    },
+    {
+      "name": "ageable_growth_goat",
+      "passed": true,
+      "detail": "observed expected behavior"
+    },
+    {
+      "name": "ageable_locked_goat",
+      "passed": true,
+      "detail": "observed expected behavior"
+    },
+    {
+      "name": "ageable_growth_hoglin",
+      "passed": true,
+      "detail": "observed expected behavior"
+    },
+    {
+      "name": "ageable_locked_hoglin",
+      "passed": true,
+      "detail": "observed expected behavior"
+    },
+    {
+      "name": "ageable_growth_horse",
+      "passed": true,
+      "detail": "observed expected behavior"
+    },
+    {
+      "name": "ageable_locked_horse",
+      "passed": true,
+      "detail": "observed expected behavior"
+    },
+    {
+      "name": "ageable_growth_llama",
+      "passed": true,
+      "detail": "observed expected behavior"
+    },
+    {
+      "name": "ageable_locked_llama",
+      "passed": true,
+      "detail": "observed expected behavior"
+    },
+    {
+      "name": "ageable_growth_mooshroom",
+      "passed": true,
+      "detail": "observed expected behavior"
+    },
+    {
+      "name": "ageable_locked_mooshroom",
+      "passed": true,
+      "detail": "observed expected behavior"
+    },
+    {
+      "name": "ageable_growth_mule",
+      "passed": true,
+      "detail": "observed expected behavior"
+    },
+    {
+      "name": "ageable_locked_mule",
+      "passed": true,
+      "detail": "observed expected behavior"
+    },
+    {
+      "name": "ageable_growth_nautilus",
+      "passed": true,
+      "detail": "observed expected behavior"
+    },
+    {
+      "name": "ageable_locked_nautilus",
+      "passed": true,
+      "detail": "observed expected behavior"
+    },
+    {
+      "name": "ageable_growth_ocelot",
+      "passed": true,
+      "detail": "observed expected behavior"
+    },
+    {
+      "name": "ageable_locked_ocelot",
+      "passed": true,
+      "detail": "observed expected behavior"
+    },
+    {
+      "name": "ageable_growth_panda",
+      "passed": true,
+      "detail": "observed expected behavior"
+    },
+    {
+      "name": "ageable_locked_panda",
+      "passed": true,
+      "detail": "observed expected behavior"
+    },
+    {
+      "name": "ageable_growth_pig",
+      "passed": true,
+      "detail": "observed expected behavior"
+    },
+    {
+      "name": "ageable_locked_pig",
+      "passed": true,
+      "detail": "observed expected behavior"
+    },
+    {
+      "name": "ageable_growth_polar_bear",
+      "passed": true,
+      "detail": "observed expected behavior"
+    },
+    {
+      "name": "ageable_locked_polar_bear",
+      "passed": true,
+      "detail": "observed expected behavior"
+    },
+    {
+      "name": "ageable_growth_rabbit",
+      "passed": true,
+      "detail": "observed expected behavior"
+    },
+    {
+      "name": "ageable_locked_rabbit",
+      "passed": true,
+      "detail": "observed expected behavior"
+    },
+    {
+      "name": "ageable_growth_sheep",
+      "passed": true,
+      "detail": "observed expected behavior"
+    },
+    {
+      "name": "ageable_locked_sheep",
+      "passed": true,
+      "detail": "observed expected behavior"
+    },
+    {
+      "name": "ageable_locked_skeleton_horse",
+      "passed": true,
+      "detail": "observed expected behavior"
+    },
+    {
+      "name": "ageable_growth_sniffer",
+      "passed": true,
+      "detail": "observed expected behavior"
+    },
+    {
+      "name": "ageable_locked_sniffer",
+      "passed": true,
+      "detail": "observed expected behavior"
+    },
+    {
+      "name": "ageable_growth_squid",
+      "passed": true,
+      "detail": "observed expected behavior"
+    },
+    {
+      "name": "ageable_locked_squid",
+      "passed": true,
+      "detail": "observed expected behavior"
+    },
+    {
+      "name": "ageable_growth_strider",
+      "passed": true,
+      "detail": "observed expected behavior"
+    },
+    {
+      "name": "ageable_locked_strider",
+      "passed": true,
+      "detail": "observed expected behavior"
+    },
+    {
+      "name": "ageable_growth_trader_llama",
+      "passed": true,
+      "detail": "observed expected behavior"
+    },
+    {
+      "name": "ageable_locked_trader_llama",
+      "passed": true,
+      "detail": "observed expected behavior"
+    },
+    {
+      "name": "ageable_growth_turtle",
+      "passed": true,
+      "detail": "observed expected behavior"
+    },
+    {
+      "name": "ageable_locked_turtle",
+      "passed": true,
+      "detail": "observed expected behavior"
+    },
+    {
+      "name": "ageable_growth_villager",
+      "passed": true,
+      "detail": "observed expected behavior"
+    },
+    {
+      "name": "ageable_locked_villager",
+      "passed": true,
+      "detail": "observed expected behavior"
+    },
+    {
+      "name": "ageable_growth_wolf",
+      "passed": true,
+      "detail": "observed expected behavior"
+    },
+    {
+      "name": "ageable_locked_wolf",
+      "passed": true,
+      "detail": "observed expected behavior"
+    },
+    {
+      "name": "ageable_locked_zombie_horse",
+      "passed": true,
+      "detail": "observed expected behavior"
+    },
+    {
+      "name": "cow_breeding_and_parent_cooldowns",
+      "passed": true,
+      "detail": "observed expected behavior"
+    },
+    {
+      "name": "clean_server_stop",
+      "passed": true,
+      "detail": "exit code 0"
+    }
+  ],
+  "source_report_sha256": "e2b046936ee319607100e5c93192208ed07da98f4046886722ea5135d7184077",
+  "source_report_command_count": 5116,
+  "qualifications": {
+    "pass": 180,
+    "fail": 1
+  },
+  "scope_note": "scenario coverage only, not complete mob parity"
+}

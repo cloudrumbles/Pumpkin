@@ -1,6 +1,11 @@
 use crate::entity::ai::control::{Control, MoveControlTrait};
+use crate::entity::ai::pathfinder::{node::PathType, pathfinding_context::PathfindingContext};
 use crate::entity::mob::Mob;
-use pumpkin_data::attributes::Attributes;
+use pumpkin_data::{
+    attributes::Attributes,
+    tag::{self, Taggable},
+};
+use pumpkin_util::math::position::BlockPos;
 use pumpkin_util::math::vector3::Vector3;
 use std::sync::atomic::Ordering;
 
@@ -45,13 +50,26 @@ impl MoveControlTrait for MoveControl {
         let living_entity = &mob_entity.living_entity;
         let entity = &living_entity.entity;
         if self.operation == Operation::Strafe {
-            // TODO: is_walkable check
+            let speed = self.speed_modifier
+                * living_entity.get_attribute_value(&Attributes::MOVEMENT_SPEED);
+            let scale = speed / f64::from(self.strafe_forwards.hypot(self.strafe_right).max(1.0));
+            let xa = f64::from(self.strafe_forwards) * scale;
+            let za = f64::from(self.strafe_right) * scale;
+            let (sin, cos) = f64::from(entity.yaw.load()).to_radians().sin_cos();
+            let test =
+                entity.pos.load() + Vector3::new(xa * cos - za * sin, 0.0, za * cos + xa * sin);
+            let mut context =
+                PathfindingContext::new(entity.block_pos.load().0, entity.world.load_full());
+            if context.get_land_node_type(BlockPos::floored_v(test).0) != PathType::Walkable {
+                self.strafe_forwards = 1.0;
+                self.strafe_right = 0.0;
+            }
+            living_entity.set_ai_speed(speed);
             living_entity.movement_input.store(Vector3::new(
                 self.strafe_right as f64,
                 0.0,
                 self.strafe_forwards as f64,
             ));
-            // Vanilla sets speed here too
             self.operation = Operation::Wait;
         } else if self.operation == Operation::MoveTo {
             self.operation = Operation::Wait;
@@ -75,14 +93,20 @@ impl MoveControlTrait for MoveControl {
 
             let movement_speed = living_entity.get_attribute_value(&Attributes::MOVEMENT_SPEED);
             let speed = self.speed_modifier * movement_speed;
-            living_entity
-                .movement_input
-                .store(Vector3::new(0.0, 0.0, speed));
+            living_entity.set_ai_speed(speed);
 
-            // TODO: Jump if needed (based on collision and height difference)
             let step_height = living_entity.get_attribute_value(&Attributes::STEP_HEIGHT);
-            if yd > step_height
-                && xd * xd + zd * zd < 1.0f64.max(entity.entity_dimension.load().width as f64)
+            let block_pos = entity.block_pos.load();
+            let world = entity.world.load();
+            let (block, state) = world.get_block_and_state(&block_pos);
+            let embedded = state
+                .get_block_collision_shapes_at(&block_pos)
+                .any(|shape| entity.pos.load().y < shape.max.y + f64::from(block_pos.0.y))
+                && !block.has_tag(&tag::Block::MINECRAFT_DOORS)
+                && !block.has_tag(&tag::Block::MINECRAFT_FENCES);
+            if (yd > step_height
+                && xd * xd + zd * zd < 1.0f64.max(f64::from(entity.entity_dimension.load().width)))
+                || embedded
             {
                 living_entity.jumping.store(true, Ordering::SeqCst);
                 self.operation = Operation::Jumping;
@@ -90,16 +114,19 @@ impl MoveControlTrait for MoveControl {
         } else if self.operation == Operation::Jumping {
             let movement_speed = living_entity.get_attribute_value(&Attributes::MOVEMENT_SPEED);
             let speed = self.speed_modifier * movement_speed;
-            living_entity
-                .movement_input
-                .store(Vector3::new(0.0, 0.0, speed));
+            living_entity.set_ai_speed(speed);
 
-            if entity.on_ground.load(Ordering::Relaxed) {
+            if entity.on_ground.load(Ordering::Relaxed)
+                || entity.touching_water.load(Ordering::Relaxed)
+                || entity.touching_lava.load(Ordering::Relaxed)
+            {
                 self.operation = Operation::Wait;
             }
+        } else {
+            let mut input = living_entity.movement_input.load();
+            input.z = 0.0;
+            living_entity.movement_input.store(input);
         }
-
-        // Navigator owns movement input while this controller waits.
     }
 
     fn set_wanted_position(&mut self, x: f64, y: f64, z: f64, speed_modifier: f64) {
@@ -119,6 +146,12 @@ impl MoveControlTrait for MoveControl {
         self.speed_modifier = 0.25;
     }
 
+    fn wanted_position(&self) -> Vector3<f64> {
+        Vector3::new(self.wanted_x, self.wanted_y, self.wanted_z)
+    }
+    fn speed_modifier(&self) -> f64 {
+        self.speed_modifier
+    }
     fn has_wanted(&self) -> bool {
         self.operation == Operation::MoveTo
     }

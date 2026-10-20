@@ -68,6 +68,7 @@ impl MoveControlTrait for FlyingMoveControl {
                 (self.speed_modifier * flying_speed) as f32
             };
 
+            living_entity.set_ai_speed(f64::from(speed));
             let sd = xd.hypot(zd);
             if yd.abs() > 1.0E-5 || sd > 1.0E-5 {
                 let x_rot_d = -((yd.atan2(sd).to_degrees()) as f32);
@@ -107,6 +108,12 @@ impl MoveControlTrait for FlyingMoveControl {
         self.operation = Operation::MoveTo;
     }
 
+    fn wanted_position(&self) -> Vector3<f64> {
+        Vector3::new(self.wanted_x, self.wanted_y, self.wanted_z)
+    }
+    fn speed_modifier(&self) -> f64 {
+        self.speed_modifier
+    }
     fn has_wanted(&self) -> bool {
         self.operation == Operation::MoveTo
     }

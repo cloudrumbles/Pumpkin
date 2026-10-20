@@ -6,6 +6,7 @@ use std::sync::{
 use pumpkin_data::entity::{EntityStatus, EntityType};
 use pumpkin_data::item::Item;
 use pumpkin_data::item_stack::ItemStack;
+use pumpkin_data::sound::Sound;
 use pumpkin_data::tag::{self, Taggable};
 use pumpkin_nbt::compound::NbtCompound;
 use pumpkin_protocol::bedrock::server::actor_event::ActorEventID;
@@ -15,9 +16,10 @@ use uuid::Uuid;
 
 use crate::entity::{
     Entity, EntityBase,
+    ageable::{AgeableData, AgeableMob},
     ai::goal::{
-        active_target::ActiveTargetGoal, avoid_entity::AvoidEntityGoal, breed::BreedGoal,
-        escape_danger::EscapeDangerGoal, follow_owner::FollowOwnerGoal,
+        ConditionalGoal, active_target::ActiveTargetGoal, avoid_entity::AvoidEntityGoal,
+        breed::BreedGoal, escape_danger::EscapeDangerGoal, follow_owner::FollowOwnerGoal,
         follow_parent::FollowParentGoal, look_around::RandomLookAroundGoal,
         look_at_entity::LookAtEntityGoal, swim::SwimGoal, tempt::TemptGoal,
         wander_around::WanderAroundGoal,
@@ -29,6 +31,7 @@ use crate::entity::{
     },
     player::Player,
 };
+use crate::world::World;
 
 const TEMPT_ITEMS: &[&Item] = &[&Item::COD, &Item::SALMON];
 
@@ -77,6 +80,7 @@ pub struct CatEntity {
     pub sound_variant: AtomicU8,
     pub collar_color: AtomicU8,
     pub tamable_data: TamableData,
+    pub ageable_data: AgeableData,
     pub is_lying: AtomicBool,
     pub relax_state_one: AtomicBool,
 }
@@ -90,6 +94,7 @@ impl CatEntity {
             sound_variant: AtomicU8::new(0), // Default to classic
             collar_color: AtomicU8::new(14), // Default to red
             tamable_data: TamableData::default(),
+            ageable_data: AgeableData::default(),
             is_lying: AtomicBool::new(false),
             relax_state_one: AtomicBool::new(false),
         };
@@ -115,7 +120,10 @@ impl CatEntity {
             // Goal 4: CatAvoidEntityGoal (when untamed)
             goal_selector.add_goal(
                 4,
-                Box::new(AvoidEntityGoal::new(&EntityType::PLAYER, 16.0, 0.8, 1.33)),
+                ConditionalGoal::new(
+                    Box::new(AvoidEntityGoal::new(&EntityType::PLAYER, 16.0, 0.8, 1.33)),
+                    |mob| !mob.is_tamed(),
+                ),
             );
             // Goal 5: BreedGoal
             goal_selector.add_goal(5, BreedGoal::new(0.8));
@@ -144,11 +152,17 @@ impl CatEntity {
             // Target Goal 1: NonTameRandomTargetGoal for Rabbit and Turtle
             target_selector.add_goal(
                 1,
-                ActiveTargetGoal::with_default(&mob_arc.mob_entity, &EntityType::RABBIT, false),
+                ConditionalGoal::new(
+                    ActiveTargetGoal::with_default(&mob_arc.mob_entity, &EntityType::RABBIT, false),
+                    |mob| !mob.is_tamed(),
+                ),
             );
             target_selector.add_goal(
                 1,
-                ActiveTargetGoal::with_default(&mob_arc.mob_entity, &EntityType::TURTLE, false),
+                ConditionalGoal::new(
+                    ActiveTargetGoal::with_default(&mob_arc.mob_entity, &EntityType::TURTLE, false),
+                    |mob| !mob.is_tamed(),
+                ),
             );
         };
 
@@ -244,6 +258,12 @@ impl CatEntity {
     }
 }
 
+impl AgeableMob for CatEntity {
+    fn get_ageable_data(&self) -> &AgeableData {
+        &self.ageable_data
+    }
+}
+
 impl Animal for CatEntity {
     fn is_food(&self, item_stack: &ItemStack) -> bool {
         let item = item_stack.get_item();
@@ -258,6 +278,43 @@ impl TamableAnimal for CatEntity {
 }
 
 impl Mob for CatEntity {
+    fn create_breed_offspring_with_partner(
+        &self,
+        world: &Arc<World>,
+        partner: &dyn Mob,
+    ) -> Option<Arc<dyn EntityBase>> {
+        let baby = self.create_breed_offspring(world)?;
+        if let (Some(other), Some(kitten)) = (
+            partner.cast_any().downcast_ref::<CatEntity>(),
+            baby.cast_any().downcast_ref::<CatEntity>(),
+        ) {
+            let coat = if rand::random::<bool>() {
+                self.variant.load(Ordering::Relaxed)
+            } else {
+                other.variant.load(Ordering::Relaxed)
+            };
+            kitten.set_variant(coat);
+            if self.is_tame() {
+                kitten.set_tame(true, self.get_owner_uuid());
+                let primary = self.get_collar_color();
+                let secondary = other.get_collar_color();
+                // Equal dyes inherit directly; unlike ordinary dyes,
+                // mixed-color recipes require the crafting recipe manager.
+                let collar = if primary == secondary || rand::random::<bool>() {
+                    primary
+                } else {
+                    secondary
+                };
+                kitten.set_collar_color(collar);
+            }
+        }
+        Some(baby)
+    }
+
+    fn as_ageable(&self) -> Option<&dyn AgeableMob> {
+        Some(self)
+    }
+
     fn as_animal(&self) -> Option<&dyn Animal> {
         Some(self)
     }
@@ -317,6 +374,10 @@ impl Mob for CatEntity {
 
     fn get_mob_entity(&self) -> &MobEntity {
         &self.mob_entity
+    }
+
+    fn mob_tick(&self, _caller: &dyn EntityBase) {
+        self.ageable_ai_step();
     }
 
     fn mob_set_variant_name(&self, name: &str) {
@@ -398,6 +459,11 @@ impl Mob for CatEntity {
                     return true;
                 }
 
+                // Once tamed, food can breed an adult cat or accelerate a
+                // kitten's growth. Do this before the generic sit toggle.
+                if is_food && self.animal_interact(player, item_stack, Sound::EntityCatEat) {
+                    return true;
+                }
                 let parent_interaction = self.mob_entity.mob_interact(player, item_stack);
                 if !parent_interaction {
                     self.set_sitting(!self.is_sitting());
