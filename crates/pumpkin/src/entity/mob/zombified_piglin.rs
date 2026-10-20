@@ -14,8 +14,9 @@ use pumpkin_util::math::boundingbox::BoundingBox;
 use crate::entity::{
     Entity, EntityBase,
     ai::goal::{
-        look_around::RandomLookAroundGoal, look_at_entity::LookAtEntityGoal, revenge::RevengeGoal,
-        swim::SwimGoal, wander_around::WanderAroundGoal, zombie_attack::ZombieAttackGoal,
+        destroy_egg::DestroyEggGoal, look_around::RandomLookAroundGoal,
+        look_at_entity::LookAtEntityGoal, revenge::RevengeGoal, swim::SwimGoal,
+        wander_around::WanderAroundGoal, zombie_attack::ZombieAttackGoal,
     },
     mob::{Mob, MobEntity, equipment::RegionalDifficulty},
 };
@@ -54,6 +55,7 @@ impl ZombifiedPiglinEntity {
 
             goal_selector.add_goal(0, Box::new(SwimGoal::default()));
             goal_selector.add_goal(2, ZombieAttackGoal::new(1.0, false));
+            goal_selector.add_goal(4, DestroyEggGoal::new(1.0, 3));
             goal_selector.add_goal(7, Box::new(WanderAroundGoal::avoiding_water(1.0, 0.001)));
             goal_selector.add_goal(
                 8,

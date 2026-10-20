@@ -15,8 +15,9 @@ use crate::entity::{
     Entity, EntityBase,
     ageable::{AgeableData, AgeableMob},
     ai::goal::{
-        escape_danger::EscapeDangerGoal, look_around::RandomLookAroundGoal,
-        look_at_entity::LookAtEntityGoal, swim::SwimGoal, wander_around::WanderAroundGoal,
+        breed::BreedGoal, follow_parent::FollowParentGoal, look_around::RandomLookAroundGoal,
+        look_at_entity::LookAtEntityGoal, run_around_like_crazy::RunAroundLikeCrazyGoal,
+        swim::SwimGoal, tempt::TemptGoal, wander_around::WanderAroundGoal,
     },
     mob::{Mob, MobEntity},
     passive::animal::Animal,
@@ -61,7 +62,17 @@ impl ZombieHorseEntity {
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
 
             goal_selector.add_goal(0, Box::new(SwimGoal::default()));
-            goal_selector.add_goal(1, EscapeDangerGoal::new(1.2));
+            goal_selector.add_goal(1, Box::new(RunAroundLikeCrazyGoal::new(1.2)));
+            goal_selector.add_goal(2, BreedGoal::new(1.0));
+            goal_selector.add_goal(
+                3,
+                Box::new(TemptGoal::with_tag(
+                    1.25,
+                    &pumpkin_data::tag::Item::MINECRAFT_ZOMBIE_HORSE_FOOD,
+                    2.5,
+                )),
+            );
+            goal_selector.add_goal(4, Box::new(FollowParentGoal::new(1.0)));
             goal_selector.add_goal(6, Box::new(WanderAroundGoal::new(0.7)));
             goal_selector.add_goal(
                 7,
@@ -115,12 +126,19 @@ impl AgeableMob for ZombieHorseEntity {
 }
 
 impl Animal for ZombieHorseEntity {
-    fn is_food(&self, _item_stack: &ItemStack) -> bool {
-        false
+    fn is_food(&self, item_stack: &ItemStack) -> bool {
+        pumpkin_data::tag::Taggable::has_tag(
+            item_stack.item,
+            &pumpkin_data::tag::Item::MINECRAFT_ZOMBIE_HORSE_FOOD,
+        )
     }
 }
 
 impl Mob for ZombieHorseEntity {
+    fn is_tamed(&self) -> bool {
+        self.is_tame()
+    }
+
     fn as_ageable(&self) -> Option<&dyn AgeableMob> {
         Some(self)
     }
