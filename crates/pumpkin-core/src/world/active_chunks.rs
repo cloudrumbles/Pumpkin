@@ -167,7 +167,7 @@ mod tests {
         assert_eq!(changes.added, vec![Vector2::new(1, 1), Vector2::new(2, 2)]);
         assert!(changes.removed.is_empty());
 
-        let second: FxHashSet<_> = [Vector2::new(2, 2)].into_iter().collect();
+        let second: FxHashSet<_> = std::iter::once(Vector2::new(2, 2)).collect();
         let changes = tracker.sync_forced_chunks(&second, &mut active, &mut newly_active);
         assert!(changes.added.is_empty());
         assert_eq!(changes.removed, vec![Vector2::new(1, 1)]);
