@@ -277,7 +277,10 @@ mod tests {
             .block
             .properties(parsed.state.id)
             .expect("oak stairs properties")
-            .to_props();
+            .to_props()
+            .into_iter()
+            .map(|property| (property.key_str(), property.value_str()))
+            .collect::<Vec<_>>();
         assert!(properties.contains(&("facing", "east")));
         assert!(properties.contains(&("half", "top")));
         assert!(properties.contains(&("waterlogged", "false")));
