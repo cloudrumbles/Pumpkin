@@ -486,7 +486,7 @@ impl World {
         for id in removed_players {
             tracker.remove_player(id, Arc::make_mut(&mut active_chunks));
         }
-        tracker.sync_forced_chunks(
+        let forced_changes = tracker.sync_forced_chunks(
             &forced_chunks,
             Arc::make_mut(&mut active_chunks),
             &mut newly_active,
@@ -526,6 +526,7 @@ impl World {
         let spawnable_chunks = tracker.loaded_active_chunks.len() as i32;
         drop(active_chunks);
         drop(tracker);
+        self.update_forced_chunk_tickets(&forced_changes);
         for pos in migrations {
             self.migrate_pending_block_entities(pos);
         }
@@ -535,6 +536,27 @@ impl World {
             &self.entities,
             self,
         )));
+    }
+
+    /// Keeps forced chunks loaded the way vanilla's forced tickets do: the
+    /// chunk itself and two rings around it are full chunks.
+    fn update_forced_chunk_tickets(&self, changes: &active_chunks::ForcedChunkChanges) {
+        if changes.added.is_empty() && changes.removed.is_empty() {
+            return;
+        }
+        let level = pumpkin_world::chunk_system::ChunkLoading::FULL_CHUNK_LEVEL - 2;
+        let mut loading = self
+            .level
+            .chunk_loading
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        for &pos in &changes.added {
+            loading.add_ticket(pos, level);
+        }
+        for &pos in &changes.removed {
+            loading.remove_ticket(pos, level);
+        }
+        loading.send_change();
     }
 
     pub fn get_lighting_config(&self) -> LightingEngineConfig {

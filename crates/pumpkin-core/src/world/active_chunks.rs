@@ -114,12 +114,14 @@ impl ActiveChunkTracker {
         }
     }
 
+    /// Brings the tracked forced chunks in line with `forced_chunks` and
+    /// returns which positions were added and which were removed.
     pub fn sync_forced_chunks(
         &mut self,
         forced_chunks: &FxHashSet<Vector2<i32>>,
         active_chunks: &mut FxHashSet<Vector2<i32>>,
         newly_active: &mut Vec<Vector2<i32>>,
-    ) {
+    ) -> ForcedChunkChanges {
         let removed: Vec<_> = self
             .forced_chunks
             .difference(forced_chunks)
@@ -129,19 +131,46 @@ impl ActiveChunkTracker {
             .difference(&self.forced_chunks)
             .copied()
             .collect();
-        for pos in removed {
+        for &pos in &removed {
             self.remove_chunk(pos, active_chunks);
         }
-        for pos in added {
+        for &pos in &added {
             self.add_chunk(pos, active_chunks, newly_active);
         }
         self.forced_chunks.clone_from(forced_chunks);
+        ForcedChunkChanges { added, removed }
     }
+}
+
+/// The forced chunks that one [`ActiveChunkTracker::sync_forced_chunks`] call
+/// added and removed.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct ForcedChunkChanges {
+    pub added: Vec<Vector2<i32>>,
+    pub removed: Vec<Vector2<i32>>,
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reports_forced_chunks_added_and_removed() {
+        let mut tracker = ActiveChunkTracker::default();
+        let mut active = FxHashSet::default();
+        let mut newly_active = Vec::new();
+        let first: FxHashSet<_> = [Vector2::new(1, 1), Vector2::new(2, 2)].into_iter().collect();
+        let mut changes = tracker.sync_forced_chunks(&first, &mut active, &mut newly_active);
+        changes.added.sort_by_key(|pos| (pos.x, pos.y));
+        assert_eq!(changes.added, vec![Vector2::new(1, 1), Vector2::new(2, 2)]);
+        assert!(changes.removed.is_empty());
+
+        let second: FxHashSet<_> = [Vector2::new(2, 2)].into_iter().collect();
+        let changes = tracker.sync_forced_chunks(&second, &mut active, &mut newly_active);
+        assert!(changes.added.is_empty());
+        assert_eq!(changes.removed, vec![Vector2::new(1, 1)]);
+        assert!(!active.contains(&Vector2::new(1, 1)));
+    }
 
     fn area(x: i32, z: i32, simulation_distance: i32) -> ActivePlayerArea {
         ActivePlayerArea {
