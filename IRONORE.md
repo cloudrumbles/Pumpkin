@@ -76,10 +76,14 @@ moved, and the header above still describes the 0.2.0 base until the steps
 below pass.
 
 Nothing on this branch has been built or tested. The first cold development
-build, run with 4 jobs, `CARGO_PROFILE_DEV_DEBUG=0` and incremental compilation
-off, grew its target directory to about 97 GB and filled the disk before it
-finished. It was stopped and the target deleted. Watch the target's size and
-find out why it grows that large before the next attempt.
+build ran out of space before it finished. It was run with 4 jobs,
+`CARGO_PROFILE_DEV_DEBUG=0` and incremental compilation off, with its target
+directory inside this worktree. On the development host, `~/workspace`,
+`~/.cache`, `~/.cargo` and `/var/tmp` share one 127 GB ext4 partition, which
+was already nearly full. The build was stopped and its target deleted, but the
+partition still had only 1.2 GB free afterwards. The target's size was not
+measured. Before building again, free space on that partition or put the
+target directory on `/home/shah`, which is a separate, larger btrfs partition.
 
 To finish the sync:
 
