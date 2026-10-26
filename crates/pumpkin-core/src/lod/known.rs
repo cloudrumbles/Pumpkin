@@ -36,6 +36,7 @@ impl KnownDisc {
 }
 
 /// Returns the lowest sequence among `chunks` that the client does not have.
+#[cfg(test)]
 pub fn lowest_missing(
     chunks: impl IntoIterator<Item = (ChunkPos, i64)>,
     has: impl Fn(ChunkPos, i64) -> bool,
