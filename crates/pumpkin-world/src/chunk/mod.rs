@@ -110,6 +110,9 @@ pub struct ChunkSections {
     pub randomly_ticking_mask: std::sync::atomic::AtomicU32,
     pub biome_sections: RwLock<Box<[BiomePalette]>>,
     pub min_y: i32,
+    /// Set whenever a block changes after the sections were built. Saving
+    /// clears it and gives the chunk a new generation journal sequence.
+    pub blocks_changed: std::sync::atomic::AtomicBool,
 }
 
 #[derive(Default, Clone, Copy)]
@@ -350,6 +353,7 @@ impl ChunkSections {
             randomly_ticking_mask: std::sync::atomic::AtomicU32::new(randomly_ticking_mask),
             biome_sections: RwLock::new(biome_sections),
             min_y,
+            blocks_changed: std::sync::atomic::AtomicBool::new(false),
         }
     }
 
@@ -375,6 +379,7 @@ impl ChunkSections {
             randomly_ticking_mask: std::sync::atomic::AtomicU32::new(randomly_ticking_mask),
             biome_sections: RwLock::new(biome_sections),
             min_y,
+            blocks_changed: std::sync::atomic::AtomicBool::new(false),
         }
     }
 
@@ -519,6 +524,8 @@ impl ChunkSections {
             if replaced_block_state_id == block_state_id {
                 return Some(replaced_block_state_id);
             }
+            self.blocks_changed
+                .store(true, std::sync::atomic::Ordering::Relaxed);
 
             if (has_random_ticks(block_state_id) || has_random_ticking_fluid(block_state_id))
                 && random_tick_sections_guard.is_none()
@@ -788,6 +795,9 @@ impl ChunkData {
 
         if modified {
             self.dirty.store(true, std::sync::atomic::Ordering::Relaxed);
+            self.section
+                .blocks_changed
+                .store(true, std::sync::atomic::Ordering::Relaxed);
         }
 
         drop(sections);

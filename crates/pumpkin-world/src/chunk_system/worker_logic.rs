@@ -201,6 +201,16 @@ pub async fn io_write_work(
         };
         // debug!("io write thread receive chunks size {}", data.len());
         let positions = data.iter().map(|(pos, _)| *pos).collect::<Vec<_>>();
+        // Taken before the chunk is serialized, so a change made while it is
+        // being written sets the flag again and gets its own sequence later.
+        for (pos, chunk) in &data {
+            if let Chunk::Level(chunk) = chunk
+                && chunk.status == ChunkStatus::Full
+                && chunk.section.blocks_changed.swap(false, Relaxed)
+            {
+                level.generation_journal.record_changed(*pos);
+            }
+        }
         let level_for_upgrade = level.clone();
         let upgrade_result = run_blocking(move || {
             let mut vec = Vec::with_capacity(data.len());
@@ -229,6 +239,8 @@ pub async fn io_write_work(
                     .await
                 {
                     error!("Failed to save chunks: {:?}", e);
+                } else {
+                    level.generation_journal.persist(&positions);
                 }
                 false
             }

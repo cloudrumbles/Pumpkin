@@ -1,5 +1,6 @@
 use crate::chunk_system::{ChunkListener, ChunkLoading, GenerationSchedule, LevelChannel};
 use crate::generation::generator::WorldGenerator;
+use crate::generation_journal::GenerationJournal;
 use crate::lighting::DynamicLightEngine;
 use crate::{
     chunk::{
@@ -88,6 +89,8 @@ pub struct Level {
 
     pub chunk_saver: Arc<ChunkSaver>,
     entity_saver: Arc<EntitySaver>,
+    /// Sequences of this dimension's generated and changed chunks.
+    pub generation_journal: Arc<GenerationJournal>,
 
     pub world_gen: ArcSwap<WorldGenerator>,
 
@@ -282,6 +285,15 @@ impl Level {
             ChunkConfig::Pump => Arc::new(EntitySaver::Pump(ChunkFileManager::new(()))),
         };
 
+        let journal_path = level_folder.dim_folder.join("ironore_generation.journal");
+        #[expect(
+            clippy::panic,
+            reason = "a dimension whose generation journal cannot be opened must not start"
+        )]
+        let generation_journal = Arc::new(
+            GenerationJournal::open(journal_path).unwrap_or_else(|error| panic!("{error}")),
+        );
+
         let pending_entity_generations = Arc::new(DashMap::new());
         let level_channel = Arc::new(LevelChannel::new());
         let thread_tracker = Mutex::new(Vec::new());
@@ -296,6 +308,7 @@ impl Level {
             light_engine: DynamicLightEngine::new(dim_min_y, dim_min_y + dim_height),
             chunk_saver,
             entity_saver,
+            generation_journal,
             schedule_tick_counts: AtomicU64::new(0),
             loaded_chunks: Arc::new(DashMap::new()),
             loaded_chunk_changes: Arc::new(SegQueue::new()),

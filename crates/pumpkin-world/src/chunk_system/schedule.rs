@@ -9,6 +9,7 @@ use super::{
     LevelChannel,
 };
 use crate::chunk::io::Dirtiable;
+use crate::generation_journal::GenerationJournal;
 use crate::level::{Level, LoadedChunkChange, SyncChunk};
 use dashmap::DashMap;
 use pumpkin_config::lighting::LightingEngineConfig;
@@ -77,6 +78,7 @@ pub struct GenerationSchedule {
     lighting_config: LightingEngineConfig,
     last_unload: std::time::Instant,
     generation_pool: Arc<rayon::ThreadPool>,
+    journal: Arc<GenerationJournal>,
 }
 
 impl GenerationSchedule {
@@ -171,6 +173,7 @@ impl GenerationSchedule {
                     lighting_config,
                     last_unload: std::time::Instant::now(),
                     generation_pool,
+                    journal: level_sched.generation_journal.clone(),
                 };
                 scheduler.work(&level_sched);
             })
@@ -1074,6 +1077,7 @@ impl GenerationSchedule {
                                 self.chunk_map.remove(&new_pos).expect("holder exists");
                             let stage = StagedChunkEnum::Full;
                             if new_pos == pos {
+                                self.journal.record_generated(new_pos);
                                 if holder.current_stage != StagedChunkEnum::Spawn {
                                     warn!(
                                         "receive_chunk(Level): holder at {:?} for pos {:?} expected {:?}; aligning",

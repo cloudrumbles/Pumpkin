@@ -12,6 +12,7 @@ pub mod cylindrical_chunk_iterator;
 pub mod data;
 pub mod dimension;
 pub mod generation;
+pub mod generation_journal;
 pub mod level;
 pub mod lighting;
 pub mod poi;
