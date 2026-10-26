@@ -67,6 +67,51 @@ unsupported observations prevented qualification of the remaining behaviors.
 The latest source build and queued server-test rerun were stopped at the user's
 request. Current-pin runtime and native client acceptance remain pending.
 
+## Paused 0.2.1 sync (2026-10-26)
+
+Branch `ironore/upstream-sync-20261026` merges upstream 0.2.1+26.3-26.51
+(`224f9f8144ca53a8d0800acb87607d714196e2a6`) into main at `f7e637be7`. The
+merge commit's message lists how each conflict was resolved. Main has not
+moved, and the header above still describes the 0.2.0 base until the steps
+below pass.
+
+Nothing on this branch has been built or tested. The first cold development
+build, run with 4 jobs, `CARGO_PROFILE_DEV_DEBUG=0` and incremental compilation
+off, grew its target directory to about 97 GB and filled the disk before it
+finished. It was stopped and the target deleted. Watch the target's size and
+find out why it grows that large before the next attempt.
+
+To finish the sync:
+
+1. Build: `RUST_MIN_STACK=33554432 cargo +nightly-2026-08-21 build --locked -p pumpkin --bin pumpkin`.
+2. Test. The server library moved from `pumpkin` to `pumpkin-core`:
+
+   ```sh
+   cargo +nightly-2026-08-21 test --locked -p pumpkin-command
+   cargo +nightly-2026-08-21 test --locked -p pumpkin-world world_clock_tests
+   cargo +nightly-2026-08-21 test --locked -p pumpkin-core --lib
+   ```
+
+   The fork's regressions to confirm are the function-ID tests in
+   `commands/function.rs`, `no_ai_stops_bat_decisions_but_keeps_roosting_physics`
+   in `entity/living.rs`, `no_gravity_round_trips_through_base_entity_nbt` in
+   `entity/mod.rs`, the block-entity tests in `world/mod.rs`, the clock tests
+   in `world/time.rs` and the teleport-acknowledgement tests in
+   `confirm_teleport/state.rs`.
+3. Run `tools/ironore/qualify.py --backend pumpkin` against the built
+   executable, as `tools/ironore/README.md` describes.
+4. Update the header above: upstream base `224f9f81`, base release
+   `0.2.1+26.3-26.51`, DataVersion 5023 and the validation commands. Replace
+   this section with the qualification result.
+5. Fast-forward `main` to the branch and push. Never force-push.
+6. In Ironore, set `tools/pumpkin-backend.json` to the new `fork_commit`, with
+   `upstream_base` `224f9f81…`, `release` `0.2.1+26.3-26.51` and
+   `world_data_version` 5023, then run `tools/test_build_pumpkin.py`.
+
+The worktree for the earlier, stalled sync to `9c04f714` (branch
+`ironore/upstream-sync-20261023`, an uncommitted merge) was left untouched.
+This branch supersedes it.
+
 ## Updating upstream
 
 Preserve upstream history and review changes on a separate branch. Before
