@@ -507,6 +507,7 @@ pub fn write_game_rules(
 
 /// Compatibility reader for callers that already tolerate missing/corrupt metadata.
 /// Runtime clock restoration and saving must use the strict variant below.
+#[must_use]
 pub fn read_world_clocks(level_folder: &Path) -> WorldClocksData {
     read_world_clocks_strict(level_folder).unwrap_or_else(|error| {
         warn!("Failed to read world_clocks.dat: {error}");
@@ -645,9 +646,9 @@ pub fn write_world_clocks(
     let mut inner = root.get_compound("data").cloned().unwrap_or_default();
     for (dim_name, clock) in &clocks.clocks {
         if inner.child_tags.contains_key(dim_name.as_str())
-            && !inner
+            && inner
                 .get_compound(dim_name)
-                .is_some_and(|saved| saved.get_long("total_ticks").is_some())
+                .is_none_or(|saved| saved.get_long("total_ticks").is_none())
         {
             return Err(WorldInfoError::DeserializationError(format!(
                 "Refusing to overwrite malformed world clock {dim_name}"

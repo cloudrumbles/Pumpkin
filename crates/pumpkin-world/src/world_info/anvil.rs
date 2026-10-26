@@ -400,10 +400,9 @@ impl WorldInfoReader for AnvilLevelInfo {
         if minecraft_data_dir(level_folder)
             .join("world_clocks.dat")
             .exists()
+            && let Some(overworld) = read_dimension_clock(level_folder, "minecraft:overworld")?
         {
-            if let Some(overworld) = read_dimension_clock(level_folder, "minecraft:overworld")? {
-                level_data.day_time = overworld.total_ticks;
-            }
+            level_data.day_time = overworld.total_ticks;
         }
 
         // weather.dat
