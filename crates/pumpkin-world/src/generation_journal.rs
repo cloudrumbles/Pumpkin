@@ -151,7 +151,7 @@ impl GenerationJournal {
         self.lock().sequences.get(&pos).copied()
     }
 
-    /// Counts the generated chunks within `radius` chunks of `centre`.
+    /// Counts the generated chunks closer than `radius` chunks to `centre`.
     #[must_use]
     pub fn count_within(&self, centre: ChunkPos, radius: i32) -> usize {
         let radius_sq = i64::from(radius) * i64::from(radius);
@@ -161,9 +161,30 @@ impl GenerationJournal {
             .filter(|pos| {
                 let dx = i64::from(pos.x - centre.x);
                 let dz = i64::from(pos.y - centre.y);
-                dx * dx + dz * dz <= radius_sq
+                dx * dx + dz * dz < radius_sq
             })
             .count()
+    }
+
+    /// Calls `visit` with each generated chunk closer than `radius` chunks to
+    /// `centre` and its sequence, and returns the newest sequence handed out,
+    /// or -1. Both come from one consistent view of the journal.
+    pub fn for_each_within(
+        &self,
+        centre: ChunkPos,
+        radius: i32,
+        mut visit: impl FnMut(ChunkPos, i64),
+    ) -> i64 {
+        let radius_sq = i64::from(radius) * i64::from(radius);
+        let inner = self.lock();
+        for (&pos, &sequence) in &inner.sequences {
+            let dx = i64::from(pos.x - centre.x);
+            let dz = i64::from(pos.y - centre.y);
+            if dx * dx + dz * dz < radius_sq {
+                visit(pos, sequence);
+            }
+        }
+        inner.next - 1
     }
 
     /// Returns how many chunks this process has generated in this dimension.
@@ -407,13 +428,28 @@ mod tests {
     }
 
     #[test]
+    fn visits_the_disc_and_reports_the_newest_sequence() {
+        let dir = tempfile::tempdir().unwrap();
+        let journal = GenerationJournal::open(journal_path(&dir)).unwrap();
+        assert_eq!(journal.for_each_within(ChunkPos::new(0, 0), 5, |_, _| {}), -1);
+        journal.record_generated(ChunkPos::new(1, 1));
+        let newest = journal.record_generated(ChunkPos::new(40, 0));
+        let mut visited = Vec::new();
+        let last = journal.for_each_within(ChunkPos::new(0, 0), 5, |pos, sequence| {
+            visited.push((pos, sequence));
+        });
+        assert_eq!(visited, vec![(ChunkPos::new(1, 1), 0)]);
+        assert_eq!(last, newest);
+    }
+
+    #[test]
     fn counts_only_chunks_inside_the_disc() {
         let dir = tempfile::tempdir().unwrap();
         let journal = GenerationJournal::open(journal_path(&dir)).unwrap();
-        for pos in [(0, 0), (3, 4), (4, 4), (-5, 0)] {
+        for pos in [(0, 0), (3, 3), (3, 4), (-6, 0)] {
             journal.record_generated(ChunkPos::new(pos.0, pos.1));
         }
-        // (4, 4) is sqrt(32) > 5 away; the others are within 5.
-        assert_eq!(journal.count_within(ChunkPos::new(0, 0), 5), 3);
+        // (3, 4) is exactly 5 away, on the edge, which the disc leaves out.
+        assert_eq!(journal.count_within(ChunkPos::new(0, 0), 5), 2);
     }
 }

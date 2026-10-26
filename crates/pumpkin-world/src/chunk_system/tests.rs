@@ -505,3 +505,18 @@ fn a_failed_background_task_is_retried_as_background() {
     let priority = priorities.of(ChunkPos::new(0, 0), StagedChunkEnum::Empty);
     assert!(retry_priority(priority) >= BACKGROUND_PRIORITY);
 }
+
+#[test]
+fn later_background_stages_run_first() {
+    let mut priorities = Priorities::default();
+    priorities
+        .level
+        .insert(ChunkPos::new(0, 0), ChunkLoading::FULL_CHUNK_LEVEL);
+    priorities.level.insert(ChunkPos::new(1, 0), 44);
+    let pos = ChunkPos::new(0, 0);
+    let lighting = priorities.of(pos, StagedChunkEnum::Lighting);
+    let noise = priorities.of(pos, StagedChunkEnum::Noise);
+    assert!(lighting < noise);
+    // At the same stage, the ticketed chunk runs before its neighbour.
+    assert!(noise < priorities.of(ChunkPos::new(1, 0), StagedChunkEnum::Noise));
+}

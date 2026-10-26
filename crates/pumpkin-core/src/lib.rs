@@ -58,6 +58,7 @@ pub mod data;
 pub mod enchantment;
 pub mod entity;
 pub mod error;
+pub mod lod;
 pub mod item;
 pub mod logging;
 pub mod net;

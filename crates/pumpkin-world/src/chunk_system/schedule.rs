@@ -145,12 +145,17 @@ impl Priorities {
     }
 
     /// Lower runs sooner. Background work always ranks after foreground work.
+    ///
+    /// Among background tasks, later stages run first, so chunks close to
+    /// full finish and leave memory before new ones are started.
     pub(crate) fn of(&self, pos: ChunkPos, stage: StagedChunkEnum) -> i16 {
         let base_level = *self.level.get(&pos).unwrap_or(&ChunkLoading::MAX_LEVEL);
-        let stage = i16::from(stage as u8);
         if self.is_background(pos) {
-            return BACKGROUND_PRIORITY + i16::from(base_level) + stage;
+            let stages_left = i16::from(StagedChunkEnum::Full as u8 - stage as u8);
+            let rings_out = i16::from(base_level - ChunkLoading::FULL_CHUNK_LEVEL).clamp(0, 7);
+            return BACKGROUND_PRIORITY + stages_left * 8 + rings_out;
         }
+        let stage = i16::from(stage as u8);
         if base_level == ChunkLoading::MAX_LEVEL {
             return 127;
         }
