@@ -195,9 +195,10 @@ fn parse_state_properties(
 
         let value_is_valid = block.states.iter().any(|state| {
             block.properties(state.id).is_some_and(|properties| {
-                properties.to_props().iter().any(|property| {
-                    property.key_str() == name && property.value_str() == value
-                })
+                properties
+                    .to_props()
+                    .iter()
+                    .any(|property| property.key_str() == name && property.value_str() == value)
             })
         });
         if !value_is_valid {

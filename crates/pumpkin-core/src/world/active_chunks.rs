@@ -159,7 +159,9 @@ mod tests {
         let mut tracker = ActiveChunkTracker::default();
         let mut active = FxHashSet::default();
         let mut newly_active = Vec::new();
-        let first: FxHashSet<_> = [Vector2::new(1, 1), Vector2::new(2, 2)].into_iter().collect();
+        let first: FxHashSet<_> = [Vector2::new(1, 1), Vector2::new(2, 2)]
+            .into_iter()
+            .collect();
         let mut changes = tracker.sync_forced_chunks(&first, &mut active, &mut newly_active);
         changes.added.sort_by_key(|pos| (pos.x, pos.y));
         assert_eq!(changes.added, vec![Vector2::new(1, 1), Vector2::new(2, 2)]);
