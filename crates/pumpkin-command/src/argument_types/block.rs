@@ -193,14 +193,7 @@ fn parse_state_properties(
         let value_start = reader.cursor();
         let value = reader.read_string()?;
 
-        let value_is_valid = block.states.iter().any(|state| {
-            block.properties(state.id).is_some_and(|properties| {
-                properties
-                    .to_props()
-                    .iter()
-                    .any(|property| property.key_str() == name && property.value_str() == value)
-            })
-        });
+        let value_is_valid = has_property_value(block, &name, &value);
         if !value_is_valid {
             reader.set_cursor(value_start);
             return Err(INVALID_BLOCK_PROPERTY_ERROR_TYPE.create(
@@ -243,6 +236,18 @@ fn parse_state_properties(
         TextComponent::text(value),
         TextComponent::text(name),
     ))
+}
+
+/// Returns whether any state of `block` has property `name` set to `value`.
+fn has_property_value(block: &Block, name: &str, value: &str) -> bool {
+    block.states.iter().any(|state| {
+        block.properties(state.id).is_some_and(|properties| {
+            properties
+                .to_props()
+                .iter()
+                .any(|property| property.key_str() == name && property.value_str() == value)
+        })
+    })
 }
 
 impl BlockArgumentType {
