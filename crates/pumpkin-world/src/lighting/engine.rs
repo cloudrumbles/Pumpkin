@@ -31,6 +31,11 @@ pub trait LightProvider {
         level: u8,
     );
     fn propagate_level(current_level: u8, opacity: u8, dir: BlockDirection) -> u8;
+    /// Whether propagation leaves cells above their column's surface alone.
+    /// Sky light sets them to full light directly when their own chunk is lit,
+    /// so flooding them from a neighbour only spends time on cells that will
+    /// be overwritten (most of a chunk's open air sits above its surface).
+    const SKIP_OPEN_SKY: bool = false;
 }
 
 pub struct BlockLightProvider;
@@ -78,6 +83,8 @@ impl LightProvider for BlockLightProvider {
 
 pub struct SkyLightProvider;
 impl LightProvider for SkyLightProvider {
+    const SKIP_OPEN_SKY: bool = true;
+
     #[inline]
     fn get_light(cache: &Cache, pos: BlockPos) -> u8 {
         get_sky_light(cache, pos)
@@ -302,6 +309,10 @@ impl<P: LightProvider> LightPropagator<P> {
                 let rel_x = (nx >> 4) - cache_x;
                 let rel_z = (nz >> 4) - cache_z;
                 if rel_x < 0 || rel_x >= cache_size || rel_z < 0 || rel_z >= cache_size {
+                    continue;
+                }
+
+                if P::SKIP_OPEN_SKY && ny > cache.get_top_y(&HeightMap::WorldSurface, nx, nz) {
                     continue;
                 }
 

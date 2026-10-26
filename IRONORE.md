@@ -25,6 +25,8 @@ artifacts.
   `/setblock` and `/fill`.
 - Merge repeated command branches so entity and block `/data` queries remain
   reachable alongside storage queries.
+- Leave sky light above a column's surface to that chunk's own lighting pass,
+  instead of flooding the open air of unlit neighbours one cell at a time.
 
 Regression tests accompany these changes. A passing build or unit test does not
 establish survival parity or compatibility with vanilla saves.

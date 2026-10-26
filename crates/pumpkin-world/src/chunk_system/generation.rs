@@ -406,4 +406,83 @@ mod tests {
             cage_chunk.get_block_state(&pumpkin_util::math::vector3::Vector3::new(1183, 68, -1330));
         assert_eq!(state.to_block_id(), pumpkin_data::Block::GRASS_BLOCK.id);
     }
+
+    /// Sky light reaches a chunk's open air directly when that chunk is lit,
+    /// so lighting a neighbour leaves it alone instead of flooding it one cell
+    /// at a time.
+    #[test]
+    fn lighting_a_chunk_leaves_its_neighbours_open_sky_to_their_own_pass() {
+        use crate::chunk_system::Cache;
+        use pumpkin_config::lighting::LightingEngineConfig;
+        use pumpkin_util::HeightMap;
+
+        let world_gen = get_world_gen(
+            Seed(42),
+            Dimension::OVERWORLD,
+            false,
+            Vec::new(),
+            String::new(),
+        );
+        let registry = BlockRegistry;
+        // Each chunk at Features through its own pipeline, as the scheduler
+        // has the neighbours when the centre is lit.
+        let mut cache = Cache::new(-1, -1, 3);
+        for dx in -1..=1 {
+            for dz in -1..=1 {
+                cache.chunks.push(generate_single_chunk_with_radius(
+                    &world_gen,
+                    &registry,
+                    dx,
+                    dz,
+                    StagedChunkEnum::Features,
+                    1,
+                ));
+            }
+        }
+        cache.advance(
+            StagedChunkEnum::Lighting,
+            &world_gen,
+            &registry,
+            &LightingEngineConfig::Default,
+        );
+
+        let mut neighbour_open_sky = 0;
+        for (index, chunk) in cache.chunks.iter().enumerate() {
+            let Chunk::Proto(chunk) = chunk else {
+                panic!("generation stops before the level chunk");
+            };
+            let centre = index == 4;
+            let bottom = i32::from(chunk.bottom_y());
+            let top_of_world = bottom + chunk.light.sky_light.len() as i32 * 16;
+            for x in 0..16 {
+                for z in 0..16 {
+                    let surface = chunk.get_top_y(
+                        &HeightMap::WorldSurface,
+                        chunk.x * 16 + x,
+                        chunk.z * 16 + z,
+                    );
+                    // The centre's own pass also lights the one-block
+                    // border of its neighbours.
+                    let (wx, wz) = (chunk.x * 16 + x, chunk.z * 16 + z);
+                    if !centre && (-1..=16).contains(&wx) && (-1..=16).contains(&wz) {
+                        continue;
+                    }
+                    for y in (surface + 1).max(bottom)..top_of_world {
+                        let local = y - bottom;
+                        let light = chunk.light.sky_light[(local >> 4) as usize].get(
+                            x as usize,
+                            (local & 15) as usize,
+                            z as usize,
+                        );
+                        if centre {
+                            assert_eq!(light, 15, "centre open sky at {x} {y} {z}");
+                        } else {
+                            neighbour_open_sky += usize::from(light != 0);
+                        }
+                    }
+                }
+            }
+        }
+        assert_eq!(neighbour_open_sky, 0);
+    }
 }
