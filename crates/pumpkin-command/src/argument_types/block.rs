@@ -8,7 +8,7 @@ use crate::{
     string_reader::StringReader,
     suggestion::suggestions::{Suggestions, SuggestionsBuilder},
 };
-use pumpkin_data::{Block, BlockState, translation};
+use pumpkin_data::{Block, BlockState, Property, translation};
 use pumpkin_util::text::TextComponent;
 
 pub const INVALID_BLOCK_ERROR_TYPE: CommandErrorType<1> = CommandErrorType::new(
@@ -141,7 +141,12 @@ fn parse_state_properties(
             properties
                 .to_props()
                 .into_iter()
-                .map(|(name, value)| (name.to_string(), value.to_string()))
+                .map(|property| {
+                    (
+                        property.key_str().to_string(),
+                        property.value_str().to_string(),
+                    )
+                })
                 .collect()
         })
         .unwrap_or_default();
@@ -190,9 +195,9 @@ fn parse_state_properties(
 
         let value_is_valid = block.states.iter().any(|state| {
             block.properties(state.id).is_some_and(|properties| {
-                properties
-                    .to_props()
-                    .contains(&(name.as_str(), value.as_str()))
+                properties.to_props().iter().any(|property| {
+                    property.key_str() == name && property.value_str() == value
+                })
             })
         });
         if !value_is_valid {
@@ -222,11 +227,11 @@ fn parse_state_properties(
     }
     reader.skip();
 
-    let property_refs: Vec<(&str, &str)> = properties
+    let parsed: Option<Vec<Property>> = properties
         .iter()
-        .map(|(name, value)| (name.as_str(), value.as_str()))
+        .map(|(name, value)| Property::from_str_pair(name, value))
         .collect();
-    if let Some(state) = block.state_from_properties(&property_refs) {
+    if let Some(state) = parsed.and_then(|parsed| block.state_from_properties(&parsed)) {
         return Ok(state);
     }
 
