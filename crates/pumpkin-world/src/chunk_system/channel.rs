@@ -2,7 +2,6 @@ use super::{ChunkLevel, ChunkPos, HashMapType};
 use crate::chunk_system::chunk_state::StagedChunkEnum;
 use crate::level::Level;
 use std::collections::hash_map::Entry;
-use std::mem::swap;
 use std::sync::atomic::Ordering::SeqCst;
 use std::sync::{Arc, Condvar, Mutex};
 
@@ -11,8 +10,26 @@ pub type LevelChange = (
     ChunkLevel,
 );
 
+/// Foreground ticket positions and the lowest foreground level at each.
+pub type ForegroundSources = Vec<(ChunkPos, i8)>;
+
+/// Everything the ticket side has changed since the scheduler last looked.
+#[derive(Default)]
+pub struct LevelUpdate {
+    pub level: Option<LevelChange>,
+    pub high_priority: Option<Vec<ChunkPos>>,
+    pub foreground: Option<ForegroundSources>,
+}
+
+impl LevelUpdate {
+    #[must_use]
+    pub const fn is_empty(&self) -> bool {
+        self.level.is_none() && self.high_priority.is_none() && self.foreground.is_none()
+    }
+}
+
 pub struct LevelChannel {
-    pub value: Mutex<(Option<LevelChange>, Option<Vec<ChunkPos>>)>,
+    pub value: Mutex<LevelUpdate>,
     pub notify: Condvar,
 }
 
@@ -26,7 +43,11 @@ impl LevelChannel {
     #[must_use]
     pub const fn new() -> Self {
         Self {
-            value: Mutex::new((None, None)),
+            value: Mutex::new(LevelUpdate {
+                level: None,
+                high_priority: None,
+                foreground: None,
+            }),
             notify: Condvar::new(),
         }
     }
@@ -43,8 +64,8 @@ impl LevelChannel {
             .value
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        value.1 = Some(pos);
-        if let Some(old) = &mut value.0 {
+        value.high_priority = Some(pos);
+        if let Some(old) = &mut value.level {
             for (pos, change) in new_value.0 {
                 match old.0.entry(pos) {
                     Entry::Occupied(mut entry) => {
@@ -64,7 +85,7 @@ impl LevelChannel {
             }
             old.1 = new_value.1;
         } else {
-            value.0 = Some(new_value);
+            value.level = Some(new_value);
         }
         self.notify.notify_one();
     }
@@ -80,7 +101,7 @@ impl LevelChannel {
             .value
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if let Some(old) = &mut value.0 {
+        if let Some(old) = &mut value.level {
             for (pos, change) in new_value.0 {
                 match old.0.entry(pos) {
                     Entry::Occupied(mut entry) => {
@@ -100,7 +121,7 @@ impl LevelChannel {
             }
             old.1 = new_value.1;
         } else {
-            value.0 = Some(new_value);
+            value.level = Some(new_value);
         }
         self.notify.notify_one();
     }
@@ -109,25 +130,29 @@ impl LevelChannel {
         self.value
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .1 = Some(pos);
+            .high_priority = Some(pos);
         self.notify.notify_one();
     }
-    pub fn get(&self) -> (Option<LevelChange>, Option<Vec<ChunkPos>>) {
-        let mut lock = self
-            .value
+    pub fn set_foreground(&self, sources: ForegroundSources) {
+        self.value
             .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let mut ret = (None, None);
-        swap(&mut ret, &mut *lock);
-        ret
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .foreground = Some(sources);
+        self.notify.notify_one();
     }
-    pub fn wait_and_get(&self, level: &Arc<Level>) -> (Option<LevelChange>, Option<Vec<ChunkPos>>) {
+    pub fn get(&self) -> LevelUpdate {
         let mut lock = self
             .value
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        while lock.0.is_none()
-            && lock.1.is_none()
+        std::mem::take(&mut *lock)
+    }
+    pub fn wait_and_get(&self, level: &Arc<Level>) -> LevelUpdate {
+        let mut lock = self
+            .value
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        while lock.is_empty()
             && !level.should_unload.load(SeqCst)
             && !level.should_save.load(SeqCst)
             && !level.shut_down_chunk_system.load(SeqCst)
@@ -141,9 +166,7 @@ impl LevelChannel {
                 break;
             }
         }
-        let mut ret = (None, None);
-        swap(&mut ret, &mut *lock);
-        ret
+        std::mem::take(&mut *lock)
     }
     pub fn notify(&self) {
         let val = self

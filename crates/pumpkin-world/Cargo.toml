@@ -55,6 +55,7 @@ rayon.workspace = true
 tokio-util = { workspace = true, features = ["rt"] }
 rand.workspace = true
 rustc-hash.workspace = true
+libc.workspace = true
 slotmap.workspace = true
 
 [dev-dependencies]

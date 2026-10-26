@@ -15,6 +15,11 @@ pub struct ChunkLoading {
     pub ticket: HashMapType<ChunkPos, Vec<i8>>, // TODO lifetime & id
     pub high_priority: Vec<ChunkPos>,
     pub sender: Arc<LevelChannel>,
+    /// How many of each position's tickets are background tickets. They sit
+    /// in `ticket` at `FULL_CHUNK_LEVEL` like any other; counting them lets
+    /// the scheduler tell the work they cause from work a player needs.
+    background_ticket: HashMapType<ChunkPos, u32>,
+    is_foreground_dirty: bool,
 }
 
 impl ChunkLoading {
@@ -122,6 +127,8 @@ impl ChunkLoading {
             ticket: HashMapType::default(),
             high_priority: Vec::new(),
             sender,
+            background_ticket: HashMapType::default(),
+            is_foreground_dirty: true,
         }
     }
 
@@ -157,6 +164,10 @@ impl ChunkLoading {
 
     pub fn send_change(&mut self) {
         // debug!("sending change");
+        if self.is_foreground_dirty {
+            self.is_foreground_dirty = false;
+            self.sender.set_foreground(self.foreground_sources());
+        }
         if !self.change.is_empty() {
             let mut tmp = HashMapType::default();
             swap(&mut tmp, &mut self.change);
@@ -172,6 +183,50 @@ impl ChunkLoading {
             self.is_priority_dirty = false;
             self.sender.set_priority(self.high_priority.clone());
         }
+    }
+
+    /// Adds a ticket that generates the chunk at `pos` to full for
+    /// background work, which the scheduler runs below anything a foreground
+    /// ticket needs.
+    pub fn add_background_ticket(&mut self, pos: ChunkPos) {
+        *self.background_ticket.entry(pos).or_default() += 1;
+        self.add_ticket(pos, Self::FULL_CHUNK_LEVEL);
+    }
+
+    pub fn remove_background_ticket(&mut self, pos: ChunkPos) {
+        let Entry::Occupied(mut count) = self.background_ticket.entry(pos) else {
+            debug_assert!(false, "no background ticket at {pos:?}");
+            return;
+        };
+        *count.get_mut() -= 1;
+        if *count.get() == 0 {
+            count.remove();
+        }
+        self.remove_ticket(pos, Self::FULL_CHUNK_LEVEL);
+    }
+
+    /// Returns each position that holds a foreground ticket, with the lowest
+    /// level among its foreground tickets.
+    #[must_use]
+    pub fn foreground_sources(&self) -> Vec<(ChunkPos, i8)> {
+        self.ticket
+            .iter()
+            .filter_map(|(&pos, levels)| {
+                let mut background = self.background_ticket.get(&pos).copied().unwrap_or(0);
+                levels
+                    .iter()
+                    .filter(|&&level| {
+                        if level == Self::FULL_CHUNK_LEVEL && background > 0 {
+                            background -= 1;
+                            false
+                        } else {
+                            true
+                        }
+                    })
+                    .min()
+                    .map(|&level| (pos, level))
+            })
+            .collect()
     }
 
     pub fn add_force_ticket(&mut self, pos: ChunkPos) {
@@ -193,6 +248,7 @@ impl ChunkLoading {
     pub fn add_ticket(&mut self, pos: ChunkPos, level: i8) {
         // debug!("add ticket at {pos:?} level {level}");
         debug_assert!(level < Self::MAX_LEVEL);
+        self.is_foreground_dirty = true;
         match self.ticket.entry(pos) {
             Entry::Occupied(mut vec) => {
                 vec.get_mut().push(level);
@@ -242,6 +298,7 @@ impl ChunkLoading {
             return;
         };
         vec.remove(index);
+        self.is_foreground_dirty = true;
         let source = *vec.iter().min().unwrap_or(&Self::MAX_LEVEL);
         if vec.is_empty() {
             self.ticket.remove(&pos);
@@ -294,6 +351,33 @@ impl ChunkLoading {
         }
         debug_assert!(self.debug_check_error());
     }
+}
+
+#[test]
+fn background_tickets_are_left_out_of_the_foreground_sources() {
+    let mut loading = ChunkLoading::new(Arc::new(LevelChannel::new()));
+    let player = ChunkPos::new(0, 0);
+    let shared = ChunkPos::new(40, 0);
+    let background = ChunkPos::new(80, 0);
+    loading.add_ticket(player, 30);
+    loading.add_ticket(shared, ChunkLoading::FULL_CHUNK_LEVEL);
+    loading.add_background_ticket(shared);
+    loading.add_background_ticket(background);
+
+    let mut sources = loading.foreground_sources();
+    sources.sort_by_key(|(pos, _)| pos.x);
+    assert_eq!(
+        sources,
+        vec![(player, 30), (shared, ChunkLoading::FULL_CHUNK_LEVEL)]
+    );
+    // Background tickets still load chunks like any other.
+    assert_eq!(
+        loading.pos_level.get(&background),
+        Some(&ChunkLoading::FULL_CHUNK_LEVEL)
+    );
+
+    loading.remove_background_ticket(background);
+    assert!(!loading.pos_level.contains_key(&background));
 }
 
 #[test]

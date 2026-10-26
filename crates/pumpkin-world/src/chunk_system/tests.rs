@@ -1,16 +1,15 @@
+use super::schedule::{BACKGROUND_PRIORITY, Priorities, TaskHeapNode, TaskQueue, retry_priority};
 use super::*;
 use crate::chunk_system::dag::Node;
 use crate::chunk_system::dag::NodeKey;
 use slotmap::Key;
-use std::collections::BinaryHeap;
 use std::collections::HashMap;
 
 #[test]
 fn ensure_dependency_chain_builds_multistage_chain() {
     let mut graph = DAG::default();
-    let mut queue = BinaryHeap::new();
-    let last_level: ChunkLevel = HashMapType::default();
-    let last_high_priority: Vec<ChunkPos> = Vec::new();
+    let mut queue = TaskQueue::default();
+    let priorities = Priorities::default();
 
     let chunk_pos = ChunkPos::new(0, 0);
 
@@ -28,8 +27,7 @@ fn ensure_dependency_chain_builds_multistage_chain() {
     GenerationSchedule::ensure_dependency_chain(
         &mut graph,
         &mut queue,
-        &last_level,
-        &last_high_priority,
+        &priorities,
         dependency_task,
         chunk_pos,
         &mut holder,
@@ -68,9 +66,8 @@ fn ensure_dependency_chain_builds_multistage_chain() {
 #[test]
 fn ensure_dependency_chain_resumes_partial_chain() {
     let mut graph = DAG::default();
-    let mut queue = BinaryHeap::new();
-    let last_level: ChunkLevel = HashMapType::default();
-    let last_high_priority: Vec<ChunkPos> = Vec::new();
+    let mut queue = TaskQueue::default();
+    let priorities = Priorities::default();
 
     let chunk_pos = ChunkPos::new(0, 0);
     let dependency_task = graph
@@ -85,8 +82,7 @@ fn ensure_dependency_chain_resumes_partial_chain() {
     GenerationSchedule::ensure_dependency_chain(
         &mut graph,
         &mut queue,
-        &last_level,
-        &last_high_priority,
+        &priorities,
         dependency_task,
         chunk_pos,
         &mut holder,
@@ -114,9 +110,8 @@ fn ensure_dependency_chain_resumes_partial_chain() {
 #[test]
 fn ensure_dependency_chain_does_nothing_if_already_met() {
     let mut graph = DAG::default();
-    let mut queue = BinaryHeap::new();
-    let last_level: ChunkLevel = HashMapType::default();
-    let last_high_priority: Vec<ChunkPos> = Vec::new();
+    let mut queue = TaskQueue::default();
+    let priorities = Priorities::default();
 
     let chunk_pos = ChunkPos::new(0, 0);
     let dependency_task = graph
@@ -131,8 +126,7 @@ fn ensure_dependency_chain_does_nothing_if_already_met() {
     GenerationSchedule::ensure_dependency_chain(
         &mut graph,
         &mut queue,
-        &last_level,
-        &last_high_priority,
+        &priorities,
         dependency_task,
         chunk_pos,
         &mut holder,
@@ -152,9 +146,8 @@ fn ensure_dependency_chain_does_nothing_if_already_met() {
 #[test]
 fn ensure_dependency_chain_respects_occupied_lock() {
     let mut graph = DAG::default();
-    let mut queue = BinaryHeap::new();
-    let last_level: ChunkLevel = HashMapType::default();
-    let last_high_priority: Vec<ChunkPos> = Vec::new();
+    let mut queue = TaskQueue::default();
+    let priorities = Priorities::default();
 
     let chunk_pos = ChunkPos::new(0, 0);
     let dependency_task = graph
@@ -176,8 +169,7 @@ fn ensure_dependency_chain_respects_occupied_lock() {
     GenerationSchedule::ensure_dependency_chain(
         &mut graph,
         &mut queue,
-        &last_level,
-        &last_high_priority,
+        &priorities,
         dependency_task,
         chunk_pos,
         &mut holder,
@@ -204,9 +196,8 @@ fn ensure_dependency_chain_respects_occupied_lock() {
 #[test]
 fn ensure_dependency_chain_early_return_skips_edge() {
     let mut graph = DAG::default();
-    let mut queue = BinaryHeap::new();
-    let last_level = HashMapType::default();
-    let last_high_priority = Vec::new();
+    let mut queue = TaskQueue::default();
+    let priorities = Priorities::default();
 
     let dependency_task = graph
         .nodes
@@ -223,8 +214,7 @@ fn ensure_dependency_chain_early_return_skips_edge() {
     GenerationSchedule::ensure_dependency_chain(
         &mut graph,
         &mut queue,
-        &last_level,
-        &last_high_priority,
+        &priorities,
         dependency_task,
         ChunkPos::new(0, 0),
         &mut holder,
@@ -459,4 +449,59 @@ fn cancelled_out_of_range_task_clears_holder_task_slot() {
         holder.tasks.iter().all(Key::is_null),
         "All task slots must be null when idle"
     );
+}
+
+fn priorities_with_player_at_origin() -> Priorities {
+    // A player with view distance 10 holds a ticket at level 43 - 11 = 32.
+    Priorities {
+        foreground: vec![(ChunkPos::new(0, 0), 32)],
+        ..Priorities::default()
+    }
+}
+
+#[test]
+fn foreground_reach_ends_one_ring_beyond_the_loaded_area() {
+    let priorities = priorities_with_player_at_origin();
+    // Level 32 + 17 = 49 is the last ring a dependency can reach.
+    assert!(!priorities.is_background(ChunkPos::new(17, -3)));
+    assert!(priorities.is_background(ChunkPos::new(18, 0)));
+    assert!(Priorities::default().is_background(ChunkPos::new(0, 0)));
+}
+
+#[test]
+fn background_tasks_run_after_every_foreground_task() {
+    let mut priorities = priorities_with_player_at_origin();
+    priorities.level.insert(ChunkPos::new(17, 0), 49);
+    priorities
+        .level
+        .insert(ChunkPos::new(100, 0), ChunkLoading::FULL_CHUNK_LEVEL);
+
+    let mut graph = DAG::default();
+    let mut queue = TaskQueue::default();
+    let far_empty = graph
+        .nodes
+        .insert(Node::new(ChunkPos::new(100, 0), StagedChunkEnum::Empty));
+    let near_full = graph
+        .nodes
+        .insert(Node::new(ChunkPos::new(17, 0), StagedChunkEnum::Noise));
+    queue.push(TaskHeapNode(
+        priorities.of(ChunkPos::new(100, 0), StagedChunkEnum::Empty),
+        far_empty,
+    ));
+    queue.push(TaskHeapNode(
+        priorities.of(ChunkPos::new(17, 0), StagedChunkEnum::Noise),
+        near_full,
+    ));
+
+    assert_eq!(queue.foreground.len(), 1);
+    assert_eq!(queue.background.len(), 1);
+    assert_eq!(queue.pop().unwrap().node_key(), near_full);
+    assert_eq!(queue.pop().unwrap().node_key(), far_empty);
+}
+
+#[test]
+fn a_failed_background_task_is_retried_as_background() {
+    let priorities = Priorities::default();
+    let priority = priorities.of(ChunkPos::new(0, 0), StagedChunkEnum::Empty);
+    assert!(retry_priority(priority) >= BACKGROUND_PRIORITY);
 }
