@@ -221,35 +221,38 @@ pub fn write_chunk_data(
             .map_err(|_| WritingError::Message("light_engine lock poisoned".into()))?;
         let num_sections = light_engine.sky_light.len();
 
-        let mut sky_light_empty_mask = 0u64;
-        let mut block_light_empty_mask = 0u64;
-        let mut sky_light_mask = 0u64;
-        let mut block_light_mask = 0u64;
+        // A dimension taller than 62 sections needs several words per mask.
+        let words = (num_sections + 2).div_ceil(64);
+        let mut sky_light_empty_mask = vec![0i64; words];
+        let mut block_light_empty_mask = vec![0i64; words];
+        let mut sky_light_mask = vec![0i64; words];
+        let mut block_light_mask = vec![0i64; words];
+        let set = |mask: &mut [i64], bit: usize| mask[bit / 64] |= 1 << (bit % 64);
 
         // Bit 0 represents the section below the world (always empty)
-        sky_light_empty_mask |= 1 << 0;
-        block_light_empty_mask |= 1 << 0;
+        set(&mut sky_light_empty_mask, 0);
+        set(&mut block_light_empty_mask, 0);
 
         // Bits 1..=num_sections represent the actual world sections
         for section_index in 0..num_sections {
             let bit_index = section_index + 1; // Offset by 1 for the below-world section
 
             if let LightContainer::Full(_) = &light_engine.sky_light[section_index] {
-                sky_light_mask |= 1 << bit_index;
+                set(&mut sky_light_mask, bit_index);
             } else {
-                sky_light_empty_mask |= 1 << bit_index;
+                set(&mut sky_light_empty_mask, bit_index);
             }
 
             if let LightContainer::Full(_) = &light_engine.block_light[section_index] {
-                block_light_mask |= 1 << bit_index;
+                set(&mut block_light_mask, bit_index);
             } else {
-                block_light_empty_mask |= 1 << bit_index;
+                set(&mut block_light_empty_mask, bit_index);
             }
         }
 
         // Bit num_sections+1 represents the section above the world (always empty)
-        sky_light_empty_mask |= 1 << (num_sections + 1);
-        block_light_empty_mask |= 1 << (num_sections + 1);
+        set(&mut sky_light_empty_mask, num_sections + 1);
+        set(&mut block_light_empty_mask, num_sections + 1);
 
         // Trust edges (1.18 - 1.19.4; removed in 1.20)
         if version < &JavaMinecraftVersion::V_1_20 {
@@ -257,19 +260,21 @@ pub fn write_chunk_data(
         }
 
         // Write Sky Light Mask
-        BitSet(Box::new([sky_light_mask as i64])).encode_with_version(&mut write, version)?;
+        let sky_count: u32 = sky_light_mask.iter().map(|word| word.count_ones()).sum();
+        let block_count: u32 = block_light_mask.iter().map(|word| word.count_ones()).sum();
+        BitSet(sky_light_mask.into_boxed_slice()).encode_with_version(&mut write, version)?;
         // Write Block Light Mask
-        BitSet(Box::new([block_light_mask as i64])).encode_with_version(&mut write, version)?;
+        BitSet(block_light_mask.into_boxed_slice()).encode_with_version(&mut write, version)?;
         // Write Empty Sky Light Mask
-        BitSet(Box::new([sky_light_empty_mask as i64])).encode_with_version(&mut write, version)?;
+        BitSet(sky_light_empty_mask.into_boxed_slice()).encode_with_version(&mut write, version)?;
         // Write Empty Block Light Mask
-        BitSet(Box::new([block_light_empty_mask as i64]))
+        BitSet(block_light_empty_mask.into_boxed_slice())
             .encode_with_version(&mut write, version)?;
 
         let light_data_size: VarInt = VarInt(LightContainer::ARRAY_SIZE as i32);
 
         // Write Sky Light arrays
-        write.write_var_int(&VarInt(sky_light_mask.count_ones() as i32))?;
+        write.write_var_int(&VarInt(sky_count as i32))?;
         for section_index in 0..num_sections {
             if let LightContainer::Full(data) = &light_engine.sky_light[section_index] {
                 write.write_var_int(&light_data_size)?;
@@ -278,7 +283,7 @@ pub fn write_chunk_data(
         }
 
         // Write Block Light arrays
-        write.write_var_int(&VarInt(block_light_mask.count_ones() as i32))?;
+        write.write_var_int(&VarInt(block_count as i32))?;
         for section_index in 0..num_sections {
             if let LightContainer::Full(data) = &light_engine.block_light[section_index] {
                 write.write_var_int(&light_data_size)?;

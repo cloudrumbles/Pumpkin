@@ -170,44 +170,48 @@ pub fn light_data_from_chunk(
         })
     } else {
         let num_sections = light_engine.sky_light.len();
-        let mut sky_light_empty_mask = 0u64;
-        let mut block_light_empty_mask = 0u64;
-        let mut sky_light_mask = 0u64;
-        let mut block_light_mask = 0u64;
+        // One bit per section plus the sections just below and above the
+        // world, so a dimension taller than 62 sections needs several words.
+        let words = (num_sections + 2).div_ceil(64);
+        let mut sky_light_empty_mask = vec![0i64; words];
+        let mut block_light_empty_mask = vec![0i64; words];
+        let mut sky_light_mask = vec![0i64; words];
+        let mut block_light_mask = vec![0i64; words];
+        let set = |mask: &mut [i64], bit: usize| mask[bit / 64] |= 1 << (bit % 64);
 
         let mut sky_light_arrays = Vec::new();
         let mut block_light_arrays = Vec::new();
 
-        sky_light_empty_mask |= 1 << 0;
-        block_light_empty_mask |= 1 << 0;
+        set(&mut sky_light_empty_mask, 0);
+        set(&mut block_light_empty_mask, 0);
 
         for section_index in 0..num_sections {
             let bit_index = section_index + 1;
 
             if let LightContainer::Full(data) = &light_engine.sky_light[section_index] {
-                sky_light_mask |= 1 << bit_index;
+                set(&mut sky_light_mask, bit_index);
                 sky_light_arrays.push(data.to_vec());
             } else {
-                sky_light_empty_mask |= 1 << bit_index;
+                set(&mut sky_light_empty_mask, bit_index);
             }
 
             if let LightContainer::Full(data) = &light_engine.block_light[section_index] {
-                block_light_mask |= 1 << bit_index;
+                set(&mut block_light_mask, bit_index);
                 block_light_arrays.push(data.to_vec());
             } else {
-                block_light_empty_mask |= 1 << bit_index;
+                set(&mut block_light_empty_mask, bit_index);
             }
         }
 
-        sky_light_empty_mask |= 1 << (num_sections + 1);
-        block_light_empty_mask |= 1 << (num_sections + 1);
+        set(&mut sky_light_empty_mask, num_sections + 1);
+        set(&mut block_light_empty_mask, num_sections + 1);
 
         Ok(LightData {
             trust_edges: true,
-            sky_light_mask: BitSet::from_u64(sky_light_mask),
-            block_light_mask: BitSet::from_u64(block_light_mask),
-            empty_sky_light_mask: BitSet::from_u64(sky_light_empty_mask),
-            empty_block_light_mask: BitSet::from_u64(block_light_empty_mask),
+            sky_light_mask: BitSet(sky_light_mask.into_boxed_slice()),
+            block_light_mask: BitSet(block_light_mask.into_boxed_slice()),
+            empty_sky_light_mask: BitSet(sky_light_empty_mask.into_boxed_slice()),
+            empty_block_light_mask: BitSet(block_light_empty_mask.into_boxed_slice()),
             sky_light_arrays,
             block_light_arrays,
         })
