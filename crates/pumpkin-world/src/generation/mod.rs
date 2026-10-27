@@ -6,6 +6,7 @@ pub mod block_predicate;
 pub mod block_state_provider;
 pub mod carver;
 pub mod coarse_surface;
+pub mod density_surface;
 pub mod feature;
 mod feature_order;
 pub mod generator;
