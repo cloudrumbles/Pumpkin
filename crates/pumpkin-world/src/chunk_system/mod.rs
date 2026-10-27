@@ -12,6 +12,16 @@ pub type HashMapType<K, V> = rustc_hash::FxHashMap<K, V>;
 pub type HashSetType<K> = rustc_hash::FxHashSet<K>;
 pub type ChunkPos = pumpkin_util::math::vector2::Vector2<i32>;
 pub type ChunkLevel = HashMapType<ChunkPos, i8>;
+/// Nanoseconds spent advancing chunks into each stage, indexed by
+/// `StagedChunkEnum as usize`, summed over every worker thread.
+pub static STAGE_NANOS: [std::sync::atomic::AtomicU64; 16] =
+    [const { std::sync::atomic::AtomicU64::new(0) }; 16];
+/// The longest single run of each stage, in nanoseconds.
+pub static STAGE_MAX_NANOS: [std::sync::atomic::AtomicU64; 16] =
+    [const { std::sync::atomic::AtomicU64::new(0) }; 16];
+/// How many times each stage ran.
+pub static STAGE_RUNS: [std::sync::atomic::AtomicU64; 16] =
+    [const { std::sync::atomic::AtomicU64::new(0) }; 16];
 pub type IOLock = std::sync::Arc<(
     std::sync::Mutex<HashMapType<ChunkPos, u8>>,
     tokio::sync::Notify,

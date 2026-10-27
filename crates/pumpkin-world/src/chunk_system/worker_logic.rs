@@ -296,6 +296,7 @@ pub fn run_generation(
         };
     };
     // Run generation with panic catching
+    let started = std::time::Instant::now();
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         cache.advance(
             stage,
@@ -305,6 +306,10 @@ pub fn run_generation(
         );
         cache // Return cache on success
     }));
+    let nanos = started.elapsed().as_nanos() as u64;
+    super::STAGE_NANOS[stage as usize].fetch_add(nanos, std::sync::atomic::Ordering::Relaxed);
+    super::STAGE_MAX_NANOS[stage as usize].fetch_max(nanos, std::sync::atomic::Ordering::Relaxed);
+    super::STAGE_RUNS[stage as usize].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 
     match result {
         Ok(cache) => RecvChunk::Generation(cache),

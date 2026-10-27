@@ -185,6 +185,27 @@ async fn main() {
         }
     }
     let elapsed = start.elapsed();
+    let stages = [
+        "None", "Empty", "Biomes", "StructureStart", "StructureReferences", "Noise",
+        "Surface", "Carvers", "Features", "Lighting", "Spawn", "Full",
+    ];
+    let nanos: Vec<u64> = pumpkin_world::chunk_system::STAGE_NANOS
+        .iter()
+        .map(|n| n.load(std::sync::atomic::Ordering::Relaxed))
+        .collect();
+    let total: u64 = nanos.iter().sum();
+    for (index, name) in stages.iter().enumerate() {
+        let runs = pumpkin_world::chunk_system::STAGE_RUNS[index].load(std::sync::atomic::Ordering::Relaxed);
+        if runs > 0 {
+            println!(
+                "{name:>20}: {:7.2} s worker time, {:5.1}%, {runs} runs, {:.2} ms each, longest {:.1} ms",
+                nanos[index] as f64 / 1e9,
+                100.0 * nanos[index] as f64 / total as f64,
+                nanos[index] as f64 / 1e6 / runs as f64,
+                pumpkin_world::chunk_system::STAGE_MAX_NANOS[index].load(std::sync::atomic::Ordering::Relaxed) as f64 / 1e6
+            );
+        }
+    }
 
     // Hash once everything is in, so light that crosses into a chunk after
     // it finished is counted the same way every run.
