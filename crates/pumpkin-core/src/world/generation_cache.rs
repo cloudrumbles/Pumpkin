@@ -93,6 +93,14 @@ impl HeightLimitView for WorldGenerationCache {
 }
 
 impl BlockAccessor for WorldGenerationCache {
+    fn min_build_y(&self) -> i32 {
+        self.world.dimension.min_y
+    }
+
+    fn build_height(&self) -> i32 {
+        self.world.dimension.height
+    }
+
     fn get_block(&self, position: &BlockPos) -> &'static Block {
         Block::from_state_id(self.read(position))
     }

@@ -462,6 +462,14 @@ mod tests {
     }
 
     impl BlockAccessor for TestWorld {
+        fn min_build_y(&self) -> i32 {
+            -64
+        }
+
+        fn build_height(&self) -> i32 {
+            384
+        }
+
         fn get_block(&self, position: &BlockPos) -> &'static Block {
             let state_id = self.get_block_state_id(position);
             Block::from_state_id(state_id)

@@ -125,9 +125,10 @@ impl InsideWorldBoundsBlockPredicate {
         !chunk.out_of_height(pos.0.y as i16)
     }
 
-    pub fn test_world(&self, _world: &dyn BlockAccessor, pos: &BlockPos) -> bool {
+    pub fn test_world(&self, world: &dyn BlockAccessor, pos: &BlockPos) -> bool {
         let pos = pos.offset(self.offset);
-        pos.0.y >= -64 && pos.0.y < 320
+        let min_y = world.min_build_y();
+        pos.0.y >= min_y && pos.0.y < min_y + world.build_height()
     }
 }
 
@@ -151,9 +152,10 @@ impl HeightRangeBlockPredicate {
         pos.0.y >= min && pos.0.y <= max
     }
 
-    pub fn test_world(&self, _world: &dyn BlockAccessor, pos: &BlockPos) -> bool {
-        let min = self.min_inclusive.resolve_y(-64, 384, 63);
-        let max = self.max_inclusive.resolve_y(-64, 384, 63);
+    pub fn test_world(&self, world: &dyn BlockAccessor, pos: &BlockPos) -> bool {
+        let (min_y, height) = (world.min_build_y() as i16, world.build_height() as u16);
+        let min = self.min_inclusive.resolve_y(min_y, height, 63);
+        let max = self.max_inclusive.resolve_y(min_y, height, 63);
         pos.0.y >= min && pos.0.y <= max
     }
 }

@@ -138,6 +138,14 @@ impl crate::generation::height_limit::HeightLimitView for TestGridCache {
 }
 
 impl crate::world::BlockAccessor for TestGridCache {
+    fn min_build_y(&self) -> i32 {
+        -64
+    }
+
+    fn build_height(&self) -> i32 {
+        384
+    }
+
     fn get_block(
         &self,
         position: &pumpkin_util::math::position::BlockPos,

@@ -94,6 +94,12 @@ pub trait BlockAccessor: Send + Sync {
 
     fn get_block_and_state(&self, position: &BlockPos) -> (&'static Block, &'static BlockState);
 
+    /// The lowest block y this accessor's world holds.
+    fn min_build_y(&self) -> i32;
+
+    /// How many blocks tall this accessor's world is.
+    fn build_height(&self) -> i32;
+
     /// Clips a ray segment against the block and fluid shapes in this accessor.
     fn clip(&self, context: &crate::clip::ClipContext) -> crate::clip::BlockHitResult {
         crate::clip::clip(self, context)

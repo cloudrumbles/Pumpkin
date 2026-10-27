@@ -1778,6 +1778,14 @@ impl ProtoChunk {
 }
 
 impl BlockAccessor for ProtoChunk {
+    fn min_build_y(&self) -> i32 {
+        i32::from(self.bottom_y())
+    }
+
+    fn build_height(&self) -> i32 {
+        i32::from(self.height())
+    }
+
     fn get_block(&self, position: &BlockPos) -> &'static Block {
         self.get_block_state(&position.0).to_block()
     }

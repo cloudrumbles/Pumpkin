@@ -7535,6 +7535,14 @@ impl World {
 }
 
 impl BlockAccessor for World {
+    fn min_build_y(&self) -> i32 {
+        self.dimension.min_y
+    }
+
+    fn build_height(&self) -> i32 {
+        self.dimension.height
+    }
+
     fn get_block(&self, position: &BlockPos) -> &'static Block {
         self.get_block_state_id_if_loaded(position)
             .map_or(&Block::AIR, Block::from_state_id)

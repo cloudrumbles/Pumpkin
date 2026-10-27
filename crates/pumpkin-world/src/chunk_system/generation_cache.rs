@@ -158,6 +158,14 @@ impl HeightLimitView for Cache {
 }
 
 impl BlockAccessor for Cache {
+    fn min_build_y(&self) -> i32 {
+        i32::from(<Self as HeightLimitView>::bottom_y(self))
+    }
+
+    fn build_height(&self) -> i32 {
+        i32::from(<Self as HeightLimitView>::height(self))
+    }
+
     fn get_block(&self, position: &BlockPos) -> &'static Block {
         GenerationCache::get_block_state(self, &position.0).to_block()
     }
