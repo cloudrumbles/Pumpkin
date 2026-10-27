@@ -65,6 +65,9 @@ pub mod whitelist;
 /// World generation and dimension configuration options.
 pub mod world;
 
+/// The overworld's terrain generator.
+pub mod terrain;
+
 use advancement::AdvancementConfig;
 use networking::NetworkingConfig;
 use player_data::PlayerDataConfig;
@@ -223,6 +226,8 @@ pub struct BasicConfiguration {
     /// Players without operator privileges cannot break or place blocks within this radius.
     /// Set to 0 to disable spawn protection.
     pub spawn_protection: u32,
+    /// What shapes the overworld's terrain, and the overworld's height.
+    pub terrain: terrain::TerrainConfig,
 }
 
 impl Default for BasicConfiguration {
@@ -246,6 +251,7 @@ impl Default for BasicConfiguration {
             enforce_whitelist: false,
             accepts_transfers: true,
             spawn_protection: 16,
+            terrain: terrain::TerrainConfig::default(),
         }
     }
 }
@@ -258,7 +264,9 @@ impl BasicConfiguration {
     }
 
     /// Validates basic configuration options.
-    pub const fn validate(&self) {}
+    pub fn validate(&self) {
+        self.terrain.validate();
+    }
 }
 
 impl AdvancedConfiguration {

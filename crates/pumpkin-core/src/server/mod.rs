@@ -261,7 +261,15 @@ impl Server {
         let tick_rate_manager = Arc::new(ServerTickRateManager::new(basic_config.tps));
 
         let dimensions = {
-            let mut dimensions = vec![Dimension::OVERWORLD];
+            let overworld = match basic_config.terrain.overworld_height() {
+                Some(height) => Dimension {
+                    height,
+                    logical_height: height,
+                    ..Dimension::OVERWORLD
+                },
+                None => Dimension::OVERWORLD,
+            };
+            let mut dimensions = vec![overworld];
             if basic_config.allow_nether {
                 dimensions.push(Dimension::THE_NETHER);
             }

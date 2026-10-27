@@ -14,9 +14,14 @@ impl PendingConnection {
                     .await;
                 continue;
             }
-            let merged = server
+            let mut merged = server
                 .datapack_manager
                 .merge_registry_entries(&reg.registry_id, &reg.registry_entries);
+            if reg.registry_id == "minecraft:dimension_type"
+                && let Some(height) = server.basic_config.terrain.overworld_height()
+            {
+                set_overworld_height(&mut merged, height);
+            }
             self.send_packet_now(&CRegistryData::new(&reg.registry_id, &merged))
                 .await;
         }
@@ -30,5 +35,23 @@ impl PendingConnection {
         }
         self.send_packet_now(&CUpdateTags::new(&tags)).await;
         self.send_packet_now(&CFinishConfig).await;
+    }
+}
+
+/// Gives the overworld's dimension type the height the server built the
+/// overworld with, so the client sizes its chunks the same way.
+fn set_overworld_height(entries: &mut [pumpkin_data::registry::RegistryEntryData], height: i32) {
+    use pumpkin_nbt::{Nbt, deserializer::NbtReadHelperJava};
+    for entry in entries {
+        if entry.entry_id.to_string() != "minecraft:overworld" {
+            continue;
+        }
+        let Some(data) = &entry.data else { continue };
+        let mut cursor = std::io::Cursor::new(&data[..]);
+        let mut nbt = Nbt::read_unnamed(&mut NbtReadHelperJava::new(&mut cursor))
+            .expect("the built-in overworld dimension type is valid NBT");
+        nbt.root_tag.put_int("height", height);
+        nbt.root_tag.put_int("logical_height", height);
+        entry.data = Some(nbt.write_unnamed().to_vec().into_boxed_slice());
     }
 }
