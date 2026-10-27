@@ -27,6 +27,18 @@ artifacts.
   reachable alongside storage queries.
 - Load forced chunks through level tickets, so `/forceload` loads and
   generates them the way vanilla's forced tickets do.
+- Make the overworld 2,032 blocks tall (y -64 to 1967) for terrain-diffusion
+  worlds. The change is in the generated `dimension.rs` and `registry.rs`,
+  made by setting `height` and `logical_height` to 2032 in the downloaded
+  datapack's `dimension_type/overworld.json` and running codegen for those two
+  outputs. The datapack isn't tracked, so a full codegen run against a fresh
+  download reverts it: set the two values again first.
+- Check world-placed features against the world's real height
+  (`BlockAccessor::min_build_y` and `build_height`), not -64 and 384.
+- `worldgen_bench` (pumpkin-core) generates 1,024 chunks through the real
+  chunk system without a server, times each stage and hashes each chunk's
+  parts against a golden file. Feature placement isn't deterministic across
+  runs yet, so blocks, light and heightmaps differ between runs.
 
 Regression tests accompany these changes. A passing build or unit test does not
 establish survival parity or compatibility with vanilla saves.
