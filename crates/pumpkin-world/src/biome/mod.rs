@@ -98,6 +98,9 @@ pub enum ActiveBiomeSupplier {
     MultiNoise(MultiNoiseBiomeSupplier),
     End(end::TheEndBiomeSupplier),
     Fixed(FixedBiomeSupplier),
+    /// A terrain-diffusion world's pre-generated biomes, the same at every
+    /// height.
+    Diffusion(&'static crate::generation::terrain_diffusion::DiffusionTerrain),
 }
 
 impl BiomeSupplier for ActiveBiomeSupplier {
@@ -106,6 +109,8 @@ impl BiomeSupplier for ActiveBiomeSupplier {
             Self::MultiNoise(supplier) => supplier.biome(x, y, z, noise),
             Self::End(supplier) => supplier.biome(x, y, z, noise),
             Self::Fixed(supplier) => supplier.biome(x, y, z, noise),
+            // Quart coordinates; the biome is the one at the cell's corner.
+            Self::Diffusion(terrain) => terrain.biome(x << 2, z << 2),
         }
     }
 }

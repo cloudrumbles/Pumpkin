@@ -138,11 +138,23 @@ pub struct VanillaGenerator {
     pub structure_calculator: StructurePlacementCalculator,
     pub structure_allowed_biomes: FxHashMap<usize, Vec<u16>>,
     pub enabled_structure_sets: Option<rustc_hash::FxHashSet<usize>>,
+    /// The pre-generated heightmap of a terrain-diffusion world, which
+    /// replaces the noise router's terrain shape and biomes.
+    pub diffusion: Option<&'static crate::generation::terrain_diffusion::DiffusionTerrain>,
 }
 
 impl VanillaGenerator {
+    /// Shapes the terrain and picks biomes from `terrain` instead of noise.
+    pub fn use_diffusion(&mut self, terrain: &'static crate::generation::terrain_diffusion::DiffusionTerrain) {
+        self.diffusion = Some(terrain);
+        self.biome_supplier = crate::biome::ActiveBiomeSupplier::Diffusion(terrain);
+    }
+
     #[must_use]
     pub fn find_spawn_position(&self) -> pumpkin_util::math::position::BlockPos {
+        if let Some(terrain) = self.diffusion {
+            return terrain.find_land(self.settings.sea_level);
+        }
         if self.settings.spawn_target.is_empty() {
             return pumpkin_util::math::position::BlockPos::ZERO;
         }
@@ -240,6 +252,7 @@ impl VanillaGenerator {
             structure_calculator: StructurePlacementCalculator::new(seed.0 as i64),
             structure_allowed_biomes,
             enabled_structure_sets,
+            diffusion: None,
         }
     }
 }

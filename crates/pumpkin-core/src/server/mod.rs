@@ -189,6 +189,20 @@ impl Server {
 
         let block_registry = super::block::registry::default_registry();
 
+        // A terrain-diffusion world's pre-generated heightmap, shared by every
+        // generator of its overworld for the life of the server.
+        let diffusion: Option<&'static pumpkin_world::generation::terrain_diffusion::DiffusionTerrain> =
+            (basic_config.terrain.generator
+                == pumpkin_config::terrain::TerrainGenerator::TerrainDiffusion)
+                .then(|| {
+                    &*Box::leak(Box::new(
+                        pumpkin_world::generation::terrain_diffusion::DiffusionTerrain::new(
+                            world_path.join("terrain-diffusion"),
+                            basic_config.terrain.scale,
+                        ),
+                    ))
+                });
+
         let level_info = match AnvilLevelInfo.read_world_info(&world_path) {
             Ok(level_info) => {
                 let dat_path = world_path.join(LEVEL_DAT_FILE_NAME);
@@ -206,10 +220,13 @@ impl Server {
                     world_path.display(),
                     basic_config.seed.0 as i64
                 );
-                let overworld_gen = pumpkin_world::generation::generator::VanillaGenerator::new(
+                let mut overworld_gen = pumpkin_world::generation::generator::VanillaGenerator::new(
                     basic_config.seed,
                     Dimension::OVERWORLD,
                 );
+                if let Some(terrain) = diffusion {
+                    overworld_gen.use_diffusion(terrain);
+                }
                 let default_data =
                     LevelData::from_world_generator(basic_config.seed, &overworld_gen);
                 AnvilLevelInfo.write_world_info(&default_data, &world_path)?;
@@ -414,6 +431,26 @@ impl Server {
             );
             let config = Arc::new(server.advanced_config.world.clone());
             let level = into_level(dim.clone(), &config, world_path.clone(), seed);
+            if let Some(terrain) = diffusion
+                && dim.minecraft_name == Dimension::OVERWORLD.minecraft_name
+            {
+                let mut generator = pumpkin_world::generation::get_world_gen(
+                    pumpkin_util::world_seed::Seed(seed as u64),
+                    dim.clone(),
+                    false,
+                    Vec::new(),
+                    String::new(),
+                );
+                if let pumpkin_world::generation::generator::WorldGenerator::Noise(vanilla) =
+                    &mut *generator
+                {
+                    vanilla.use_diffusion(terrain);
+                }
+                if let Some(cache) = generator.global_structure_cache() {
+                    cache.ensure_strongholds_generated();
+                }
+                level.set_world_gen(Arc::from(generator));
+            }
             let world = Arc::new(World::load(
                 level.clone(),
                 server.level_info.clone(),

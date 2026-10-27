@@ -16,6 +16,7 @@ pub mod proto_chunk;
 pub mod proto_chunk_test;
 pub mod rule;
 pub mod structure;
+pub mod terrain_diffusion;
 mod surface;
 
 use generator::VanillaGenerator;

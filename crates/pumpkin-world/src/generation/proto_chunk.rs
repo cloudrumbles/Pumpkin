@@ -719,6 +719,11 @@ impl ProtoChunk {
     #[expect(clippy::too_many_lines)]
     pub fn step_to_noise(&mut self, generator: &super::generator::VanillaGenerator) {
         debug_assert_eq!(self.stage, StagedChunkEnum::StructureReferences);
+        if let Some(terrain) = generator.diffusion {
+            self.fill_from_heightmap(terrain, generator);
+            self.stage = StagedChunkEnum::Noise;
+            return;
+        }
         let settings = generator.settings;
         let generation_shape = &settings.shape;
         let start_x = start_block_x(self.x);
@@ -886,6 +891,32 @@ impl ProtoChunk {
         self.stage = StagedChunkEnum::Noise;
     }
 
+    /// Terrain-diffusion terrain: the default block up to each column's top,
+    /// the sea's fluid above it up to sea level, air above that. Structures'
+    /// terrain adaptation (the beardifier) isn't applied.
+    fn fill_from_heightmap(
+        &mut self,
+        terrain: &super::terrain_diffusion::DiffusionTerrain,
+        generator: &super::generator::VanillaGenerator,
+    ) {
+        let settings = generator.settings;
+        let fluid = BlockState::from_id(settings.default_fluid.id);
+        let bottom = i32::from(self.bottom_y());
+        let ceiling = bottom + i32::from(self.height());
+        let (start_x, start_z) = (self.start_block_x(), self.start_block_z());
+        for z in start_z..start_z + 16 {
+            for x in start_x..start_x + 16 {
+                let top = terrain.top(x, z).clamp(bottom, ceiling);
+                for y in bottom..top {
+                    self.set_block_state(x, y, z, generator.default_block);
+                }
+                for y in top..settings.sea_level.min(ceiling) {
+                    self.set_block_state(x, y, z, fluid);
+                }
+            }
+        }
+    }
+
     pub(crate) fn step_to_surface(
         &mut self,
         generator: &super::generator::VanillaGenerator,
@@ -901,7 +932,8 @@ impl ProtoChunk {
         let mut surface_height_estimate_sampler = SurfaceHeightEstimateSampler::generate(
             &generator.base_router.surface_estimator,
             &surface_config,
-        );
+        )
+        .with_diffusion(generator.diffusion);
 
         self.build_surface(
             generator,

@@ -37,7 +37,8 @@ impl<'a> NoiseHeightSampler<'a> {
                 i32::from(shape.max_y()),
                 shape.vertical_cell_block_count() as usize,
             ),
-        );
+        )
+        .with_diffusion(generator.diffusion);
         Self {
             generator,
             preliminary,
@@ -49,6 +50,25 @@ impl<'a> NoiseHeightSampler<'a> {
 
     fn ensure_column_sampled(&mut self, x: i32, z: i32) {
         if self.columns.contains_key(&(x, z)) {
+            return;
+        }
+        if let Some(terrain) = self.generator.diffusion {
+            // The same column fill_from_heightmap makes.
+            let dimension = &self.generator.dimension;
+            let fluid = BlockState::from_id(self.generator.settings.default_fluid.id);
+            let top = terrain.top(x, z);
+            let blocks = (dimension.min_y..dimension.min_y + dimension.height)
+                .map(|y| {
+                    if y < top {
+                        self.generator.default_block
+                    } else if y < self.generator.settings.sea_level {
+                        fluid
+                    } else {
+                        Block::AIR.default_state
+                    }
+                })
+                .collect();
+            self.columns.insert((x, z), (dimension.min_y, blocks));
             return;
         }
 

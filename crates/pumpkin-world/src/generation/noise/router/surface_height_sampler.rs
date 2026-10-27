@@ -41,13 +41,29 @@ pub struct SurfaceHeightEstimateSampler<'a> {
 
     // TODO: Can this be a flat map? I think the aquifer sampler samples outside of the chunk
     cache: FxHashMap<u64, i32>,
+
+    /// A terrain-diffusion world's heightmap, whose tops are the estimate.
+    diffusion: Option<&'static crate::generation::terrain_diffusion::DiffusionTerrain>,
 }
 
 impl<'a> SurfaceHeightEstimateSampler<'a> {
+    /// Estimates from a terrain-diffusion heightmap instead of the noise.
+    #[must_use]
+    pub const fn with_diffusion(
+        mut self,
+        diffusion: Option<&'static crate::generation::terrain_diffusion::DiffusionTerrain>,
+    ) -> Self {
+        self.diffusion = diffusion;
+        self
+    }
+
     pub fn estimate_height(&mut self, block_x: i32, block_z: i32) -> i32 {
         let biome_aligned_x = biome_coords::to_block(biome_coords::from_block(block_x));
         let biome_aligned_z = biome_coords::to_block(biome_coords::from_block(block_z));
 
+        if let Some(terrain) = self.diffusion {
+            return terrain.top(biome_aligned_x, biome_aligned_z);
+        }
         let packed_column = chunk_pos::packed(biome_aligned_x as u64, biome_aligned_z as u64);
         if let Some(&estimate) = self.cache.get(&packed_column) {
             return estimate;
@@ -153,6 +169,7 @@ impl<'a> SurfaceHeightEstimateSampler<'a> {
             y_level_step_count: build_options.y_level_step_count,
 
             cache: FxHashMap::default(),
+            diffusion: None,
         }
     }
 }
