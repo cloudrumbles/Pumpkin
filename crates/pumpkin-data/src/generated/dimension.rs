@@ -82,8 +82,8 @@ impl Dimension {
         has_ceiling: false,
         coordinate_scale: 1f64,
         min_y: -64i32,
-        height: 384i32,
-        logical_height: 384i32,
+        height: 2032i32,
+        logical_height: 2032i32,
         infiniburn: "#minecraft:infiniburn_overworld",
         ambient_light: 0f32,
         monster_spawn_light_level: IntProvider::Object(NormalIntProvider::Uniform(
