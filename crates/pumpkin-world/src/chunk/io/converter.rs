@@ -482,7 +482,7 @@ mod tests {
 
         let chunk = ChunkData {
             section: sections,
-            heightmap: Mutex::new(ChunkHeightmaps::default()),
+            heightmap: Mutex::new(ChunkHeightmaps::new(24 * 16)),
             x: chunk_pos.x,
             z: chunk_pos.y,
             block_ticks: ChunkTickScheduler::default(),

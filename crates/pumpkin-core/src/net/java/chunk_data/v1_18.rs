@@ -36,14 +36,15 @@ pub fn write_chunk_data(
             Ok(())
         };
 
-        write_heightmap(1, heightmaps.world_surface.as_deref().unwrap_or(&[0; 37]))?;
-        write_heightmap(4, heightmaps.motion_blocking.as_deref().unwrap_or(&[0; 37]))?;
+        let empty = vec![0; pumpkin_world::chunk::ChunkHeightmaps::longs(heightmaps.bits)];
+        write_heightmap(1, heightmaps.world_surface.as_deref().unwrap_or(&empty))?;
+        write_heightmap(4, heightmaps.motion_blocking.as_deref().unwrap_or(&empty))?;
         write_heightmap(
             5,
             heightmaps
                 .motion_blocking_no_leaves
                 .as_deref()
-                .unwrap_or(&[0; 37]),
+                .unwrap_or(&empty),
         )?;
     } else {
         let mut comp = pumpkin_nbt::compound::NbtCompound::new();

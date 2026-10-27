@@ -197,11 +197,34 @@ pub struct ChunkHeightmaps {
     pub world_surface: Option<Box<[i64]>>,
     pub motion_blocking: Option<Box<[i64]>>,
     pub motion_blocking_no_leaves: Option<Box<[i64]>>,
+    /// Bits per column, enough for every height the world can hold.
+    pub bits: u8,
 }
 
 impl ChunkHeightmaps {
-    /// Longs a heightmap occupies: 256 columns of 9 bits, 7 columns per long.
-    pub const LONGS: usize = 37;
+    /// Empty heightmaps for a world `height` blocks tall.
+    #[must_use]
+    pub const fn new(height: usize) -> Self {
+        Self {
+            world_surface: None,
+            motion_blocking: None,
+            motion_blocking_no_leaves: None,
+            bits: Self::bits_for(height),
+        }
+    }
+
+    /// As vanilla: the bits to store 0 to `height`, 9 for 384 and 12 for
+    /// 2,096. Columns never straddle two longs.
+    #[must_use]
+    pub const fn bits_for(height: usize) -> u8 {
+        (usize::BITS - height.leading_zeros()) as u8
+    }
+
+    /// Longs a heightmap of 256 columns occupies at `bits` per column.
+    #[must_use]
+    pub const fn longs(bits: u8) -> usize {
+        256usize.div_ceil(64 / bits as usize)
+    }
 
     pub fn set(&mut self, heightmap: ChunkHeightmapType, x: i32, z: i32, height: i32, min_y: i32) {
         let data = match heightmap {
@@ -210,24 +233,26 @@ impl ChunkHeightmaps {
             ChunkHeightmapType::MotionBlockingNoLeaves => &mut self.motion_blocking_no_leaves,
         };
 
-        let data = data.get_or_insert_with(|| vec![0; Self::LONGS].into_boxed_slice());
+        let bits = usize::from(self.bits);
+        let data = data.get_or_insert_with(|| vec![0; Self::longs(self.bits)].into_boxed_slice());
 
         let local_x = (x & 15) as usize;
         let local_z = (z & 15) as usize;
         let column_idx = local_z * 16 + local_x;
 
         // In Minecraft 1.16+, height is stored as (y - min_y + 1). 0 means below min_y.
-        // It uses 9 bits per value, packed such that they do not cross u64 boundaries.
-        // 64 / 9 = 7 values per u64.
+        // Values are packed so that they do not cross u64 boundaries.
         let val = (height - min_y + 1).max(0) as u64;
+        let per_long = 64 / bits;
+        let value_mask = (1u64 << bits) - 1;
 
-        let array_idx = column_idx / 7;
-        let shift = (column_idx % 7) * 9;
+        let array_idx = column_idx / per_long;
+        let shift = (column_idx % per_long) * bits;
 
-        let mask = 0x1FFu64 << shift;
+        let mask = value_mask << shift;
 
         let mut current = data[array_idx] as u64;
-        current = (current & !mask) | ((val & 0x1FF) << shift);
+        current = (current & !mask) | ((val & value_mask) << shift);
         data[array_idx] = current as i64;
     }
 
@@ -247,11 +272,13 @@ impl ChunkHeightmaps {
         let local_z = (z & 15) as usize;
         let column_idx = local_z * 16 + local_x;
 
-        let array_idx = column_idx / 7;
-        let shift = (column_idx % 7) * 9;
+        let bits = usize::from(self.bits);
+        let per_long = 64 / bits;
+        let array_idx = column_idx / per_long;
+        let shift = (column_idx % per_long) * bits;
 
         let current = data[array_idx] as u64;
-        let val = (current >> shift) & 0x1FF;
+        let val = (current >> shift) & ((1u64 << bits) - 1);
 
         (val as i32) + min_y - 1
     }
@@ -293,17 +320,6 @@ impl ChunkHeightmaps {
         }
 
         false
-    }
-}
-
-/// The Heightmap for a completely empty chunk
-impl Default for ChunkHeightmaps {
-    fn default() -> Self {
-        Self {
-            motion_blocking: None,
-            motion_blocking_no_leaves: None,
-            world_surface: None,
-        }
     }
 }
 
@@ -639,7 +655,7 @@ impl ChunkData {
     pub fn empty(x: i32, z: i32) -> Self {
         Self {
             section: ChunkSections::new(24, -64),
-            heightmap: std::sync::Mutex::new(ChunkHeightmaps::default()),
+            heightmap: std::sync::Mutex::new(ChunkHeightmaps::new(24 * 16)),
             x,
             z,
             block_ticks: ChunkTickScheduler::default(),
@@ -896,7 +912,7 @@ impl ChunkData {
     //TODO: Tracking heightmaps update.
     pub fn calculate_heightmap(&self) -> ChunkHeightmaps {
         let highest_non_empty_subchunk = self.get_highest_non_empty_subchunk();
-        let mut heightmaps = ChunkHeightmaps::default();
+        let mut heightmaps = ChunkHeightmaps::new(self.section.count * 16);
 
         for x in 0..16 {
             for z in 0..16 {
@@ -1052,6 +1068,30 @@ mod tests {
             let cache = cache.as_ref().unwrap();
             assert!(cache[0].random_ticking_fluid_count > 0);
             assert!(cache[0].is_randomly_ticking());
+        }
+    }
+
+    #[test]
+    fn heightmaps_hold_every_height_of_vanilla_and_tall_worlds() {
+        use crate::chunk::{ChunkHeightmapType, ChunkHeightmaps};
+
+        for (height, bits, longs) in [(384, 9, 37), (2096, 12, 52)] {
+            let mut heightmaps = ChunkHeightmaps::new(height);
+            assert_eq!(heightmaps.bits, bits);
+            let top = height as i32 - 64 - 1;
+            for x in 0..16 {
+                for z in 0..16 {
+                    let y = if (x + z) % 2 == 0 { top } else { -65 };
+                    heightmaps.set(ChunkHeightmapType::WorldSurface, x, z, y, -64);
+                }
+            }
+            assert_eq!(heightmaps.world_surface.as_ref().unwrap().len(), longs);
+            for x in 0..16 {
+                for z in 0..16 {
+                    let y = if (x + z) % 2 == 0 { top } else { -65 };
+                    assert_eq!(heightmaps.get(ChunkHeightmapType::WorldSurface, x, z, -64), y);
+                }
+            }
         }
     }
 

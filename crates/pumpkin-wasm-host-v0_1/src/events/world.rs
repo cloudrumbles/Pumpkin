@@ -74,7 +74,7 @@ impl ToFromWasmEvent for ChunkLoad {
                 let chunk_data = pumpkin_world::chunk::ChunkData {
                     section: pumpkin_world::chunk::ChunkSections::new(24, -64),
                     heightmap: std::sync::Mutex::new(
-                        pumpkin_world::chunk::ChunkHeightmaps::default(),
+                        pumpkin_world::chunk::ChunkHeightmaps::new(24 * 16),
                     ),
                     x: data.chunk_x,
                     z: data.chunk_z,
@@ -127,7 +127,7 @@ impl ToFromWasmEvent for ChunkSave {
                 let chunk_data = pumpkin_world::chunk::ChunkData {
                     section: pumpkin_world::chunk::ChunkSections::new(24, -64),
                     heightmap: std::sync::Mutex::new(
-                        pumpkin_world::chunk::ChunkHeightmaps::default(),
+                        pumpkin_world::chunk::ChunkHeightmaps::new(24 * 16),
                     ),
                     x: data.chunk_x,
                     z: data.chunk_z,
@@ -176,7 +176,7 @@ impl ToFromWasmEvent for ChunkSend {
                 let chunk_data = pumpkin_world::chunk::ChunkData {
                     section: pumpkin_world::chunk::ChunkSections::new(24, -64),
                     heightmap: std::sync::Mutex::new(
-                        pumpkin_world::chunk::ChunkHeightmaps::default(),
+                        pumpkin_world::chunk::ChunkHeightmaps::new(24 * 16),
                     ),
                     x: data.chunk_x,
                     z: data.chunk_z,

@@ -240,7 +240,7 @@ impl Chunk {
     }
 
     fn build_level_heightmaps(proto_chunk: &ProtoChunk, min_y: i32) -> ChunkHeightmaps {
-        let mut heightmaps = ChunkHeightmaps::default();
+        let mut heightmaps = ChunkHeightmaps::new(usize::from(proto_chunk.height()));
         for x in 0..16 {
             for z in 0..16 {
                 let source_index = x * 16 + z;
@@ -276,7 +276,7 @@ impl Chunk {
             self,
             Self::Level(Arc::new(ChunkData {
                 section: ChunkSections::new(0, 0),
-                heightmap: Mutex::default(),
+                heightmap: Mutex::new(ChunkHeightmaps::new(24 * 16)),
                 x: 0,
                 z: 0,
                 block_ticks: ChunkTickScheduler::default(),

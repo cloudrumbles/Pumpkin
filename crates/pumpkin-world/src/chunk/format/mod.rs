@@ -379,27 +379,26 @@ impl ChunkData {
             blocks_changed: std::sync::atomic::AtomicBool::new(false),
         };
 
+        let empty_heightmaps = ChunkHeightmaps::new(section.count * 16);
+        let longs = ChunkHeightmaps::longs(empty_heightmaps.bits);
         let heightmaps = root_tag.get_compound("Heightmaps").map_or(
-            ChunkHeightmaps {
-                world_surface: None,
-                motion_blocking: None,
-                motion_blocking_no_leaves: None,
-            },
+            empty_heightmaps.clone(),
             // A heightmap of the wrong length is dropped rather than stored:
             // every reader indexes it by column and would run off the end.
             |h_compound| ChunkHeightmaps {
                 world_surface: h_compound
                     .get_long_array("WORLD_SURFACE")
-                    .filter(|a| a.len() == ChunkHeightmaps::LONGS)
+                    .filter(|a| a.len() == longs)
                     .map(|a| a.to_vec().into_boxed_slice()),
                 motion_blocking: h_compound
                     .get_long_array("MOTION_BLOCKING")
-                    .filter(|a| a.len() == ChunkHeightmaps::LONGS)
+                    .filter(|a| a.len() == longs)
                     .map(|a| a.to_vec().into_boxed_slice()),
                 motion_blocking_no_leaves: h_compound
                     .get_long_array("MOTION_BLOCKING_NO_LEAVES")
-                    .filter(|a| a.len() == ChunkHeightmaps::LONGS)
+                    .filter(|a| a.len() == longs)
                     .map(|a| a.to_vec().into_boxed_slice()),
+                ..empty_heightmaps
             },
         );
         let mut block_ticks = Vec::new();
@@ -724,15 +723,15 @@ impl ChunkData {
         let ws = heightmap_lock
             .world_surface
             .as_deref()
-            .filter(|a| a.len() == ChunkHeightmaps::LONGS);
+            .filter(|a| a.len() == ChunkHeightmaps::longs(heightmap_lock.bits));
         let mb = heightmap_lock
             .motion_blocking
             .as_deref()
-            .filter(|a| a.len() == ChunkHeightmaps::LONGS);
+            .filter(|a| a.len() == ChunkHeightmaps::longs(heightmap_lock.bits));
         let mbnl = heightmap_lock
             .motion_blocking_no_leaves
             .as_deref()
-            .filter(|a| a.len() == ChunkHeightmaps::LONGS);
+            .filter(|a| a.len() == ChunkHeightmaps::longs(heightmap_lock.bits));
         let has_custom = !custom_data.is_empty();
 
         let mut flags = u8::from(is_light_correct);
@@ -748,6 +747,8 @@ impl ChunkData {
         if has_custom {
             flags |= 1 << 4;
         }
+        // Bits 5 and 6: heightmap bits per column, less 9.
+        flags |= (heightmap_lock.bits - 9) << 5;
 
         let status_u8 = match self.status {
             ChunkStatus::Empty => 0,
@@ -903,18 +904,20 @@ impl ChunkData {
         };
         let light_correct = (flags & 1) != 0;
 
+        let heightmap_bits = 9 + ((flags >> 5) & 3);
+        let longs = ChunkHeightmaps::longs(heightmap_bits);
         let read_heightmap =
             |buf: &mut &[u8], present: bool| -> Result<Option<Box<[i64]>>, ChunkParsingError> {
                 if !present {
                     return Ok(None);
                 }
-                if buf.remaining() < ChunkHeightmaps::LONGS * 8 {
+                if buf.remaining() < longs * 8 {
                     return Err(ChunkParsingError::ErrorDeserializingChunk(
                         "Unexpected EOF reading heightmap".into(),
                     ));
                 }
-                let mut hm = Vec::with_capacity(ChunkHeightmaps::LONGS);
-                for _ in 0..ChunkHeightmaps::LONGS {
+                let mut hm = Vec::with_capacity(longs);
+                for _ in 0..longs {
                     hm.push(buf.get_i64());
                 }
                 Ok(Some(hm.into_boxed_slice()))
@@ -924,6 +927,7 @@ impl ChunkData {
             world_surface: read_heightmap(&mut buf, (flags & (1 << 1)) != 0)?,
             motion_blocking: read_heightmap(&mut buf, (flags & (1 << 2)) != 0)?,
             motion_blocking_no_leaves: read_heightmap(&mut buf, (flags & (1 << 3)) != 0)?,
+            bits: heightmap_bits,
         };
 
         if buf.remaining() < 2 {
