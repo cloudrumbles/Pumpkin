@@ -31,6 +31,13 @@ artifacts.
   `vanilla` (384 blocks) or `terrain_diffusion`, whose `scale` (1 to 6,
   default 6) sets the height, 2,096 blocks at scale 6. The overworld dimension
   type sent to clients is patched to match.
+- Generate `terrain_diffusion` worlds from the regions ironore's
+  pomme-terrain pre-generates into the world folder's `terrain-diffusion`
+  directory (format in `generation/terrain_diffusion.rs`): the noise stage
+  fills from each column's top, biomes come from the regions, and the surface
+  estimate, structure height sampler and spawn search read the same tops.
+- Pack heightmaps with as many bits as the world is tall; pump chunks keep the
+  width in flag bits 5 and 6.
 - Check world-placed features against the world's real height
   (`BlockAccessor::min_build_y` and `build_height`), not -64 and 384.
 - `worldgen_bench` (pumpkin-core) generates 1,024 chunks through the real
