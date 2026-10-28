@@ -141,7 +141,10 @@ struct Session {
     /// with a set of the same positions for lookups.
     unacknowledged: VecDeque<ChunkPos>,
     unacknowledged_set: FxHashSet<ChunkPos>,
+    /// The newest sequence at the last recount, and the radius around the
+    /// centre within which the client then had every generated chunk.
     complete_through: i64,
+    complete_radius: i32,
     generated_in_disc: usize,
     delivered_in_disc: usize,
     counts_stale: bool,
@@ -166,6 +169,7 @@ impl Session {
             unacknowledged: VecDeque::new(),
             unacknowledged_set: FxHashSet::default(),
             complete_through: -1,
+            complete_radius: 0,
             generated_in_disc: 0,
             delivered_in_disc: 0,
             counts_stale: true,
@@ -665,17 +669,19 @@ impl Service {
             // timer rather than only after this service changed something.
             if recount_due || (session.counts_stale && !has_work) {
                 let mut generated = 0;
-                let mut lowest_missing: Option<i64> = None;
+                let mut nearest_missing: Option<u32> = None;
+                let centre = session.centre;
                 let last_sequence =
-                    journal.for_each_within(session.centre, session.radius, |pos, sequence| {
+                    journal.for_each_within(centre, session.radius, |pos, sequence| {
                         generated += 1;
                         if !session.has(pos, sequence) {
-                            lowest_missing =
-                                Some(lowest_missing.map_or(sequence, |low| low.min(sequence)));
+                            let ring = disc::ring_of(pos.x - centre.x, pos.y - centre.y);
+                            nearest_missing = Some(nearest_missing.map_or(ring, |near| near.min(ring)));
                         }
                     });
                 session.generated_in_disc = generated;
-                session.complete_through = known::complete_through(lowest_missing, last_sequence);
+                session.complete_through = last_sequence;
+                session.complete_radius = known::complete_radius(nearest_missing, session.radius);
                 session.delivered_in_disc = session
                     .delivered
                     .keys()
@@ -694,6 +700,7 @@ impl Service {
                 centre_x: session.centre.x,
                 centre_z: session.centre.y,
                 complete_through: session.complete_through,
+                complete_radius: session.complete_radius,
             };
             client
                 .enqueue_client_packet(&CCustomPayload::new(

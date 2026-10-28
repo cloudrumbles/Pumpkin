@@ -48,9 +48,10 @@ pub struct Progress {
     pub sent: i32,
     pub centre_x: i32,
     pub centre_z: i32,
-    /// The highest sequence such that the client has acknowledged every chunk
-    /// of the current disc at or below it, or -1.
+    /// The client has acknowledged every chunk at or below this sequence
+    /// within `complete_radius` of the centre; -1 when nothing.
     pub complete_through: i64,
+    pub complete_radius: i32,
 }
 
 /// Reads an `ironore:lod_request` payload.
@@ -112,7 +113,7 @@ pub fn write_chunk(sequence: i64, chunk: &ChunkData) -> Result<Vec<u8>, WritingE
 /// Writes an `ironore:lod_progress` payload.
 #[must_use]
 pub fn write_progress(progress: &Progress) -> Vec<u8> {
-    let mut payload = Vec::with_capacity(31);
+    let mut payload = Vec::with_capacity(36);
     // Writing to a Vec cannot fail.
     let _ = payload.write_var_int(&VarInt(progress.total));
     let _ = payload.write_var_int(&VarInt(progress.generated));
@@ -120,6 +121,7 @@ pub fn write_progress(progress: &Progress) -> Vec<u8> {
     let _ = payload.write_i32_be(progress.centre_x);
     let _ = payload.write_i32_be(progress.centre_z);
     let _ = payload.write_i64_be(progress.complete_through);
+    let _ = payload.write_var_int(&VarInt(progress.complete_radius));
     payload
 }
 
@@ -217,6 +219,7 @@ mod tests {
             centre_x: -1,
             centre_z: 5,
             complete_through: 77,
+            complete_radius: 40,
         });
         let mut reader = &payload[..];
         assert_eq!(reader.get_var_int().unwrap().0, 300);
@@ -225,6 +228,7 @@ mod tests {
         assert_eq!(reader.get_i32_be().unwrap(), -1);
         assert_eq!(reader.get_i32_be().unwrap(), 5);
         assert_eq!(reader.get_i64_be().unwrap(), 77);
+        assert_eq!(reader.get_var_int().unwrap().0, 40);
         assert!(reader.is_empty());
     }
 }

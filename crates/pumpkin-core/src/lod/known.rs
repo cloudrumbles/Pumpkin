@@ -35,25 +35,14 @@ impl KnownDisc {
     }
 }
 
-/// Returns the lowest sequence among `chunks` that the client does not have.
-#[cfg(test)]
-pub fn lowest_missing(
-    chunks: impl IntoIterator<Item = (ChunkPos, i64)>,
-    has: impl Fn(ChunkPos, i64) -> bool,
-) -> Option<i64> {
-    chunks
-        .into_iter()
-        .filter(|&(pos, sequence)| !has(pos, sequence))
-        .map(|(_, sequence)| sequence)
-        .min()
-}
-
-/// Returns `complete_through` for a disc: just below the lowest sequence the
-/// client lacks there, or `last_sequence`, the newest sequence handed out
-/// anywhere, when it lacks none. Any chunk generated later gets a higher one.
+/// Returns the radius of the largest disc around the centre in which the
+/// client has every generated chunk: the ring of the nearest one it lacks, or
+/// the whole `radius` when it lacks none. Together with the newest sequence
+/// handed out, it tells the client what it can claim next session; chunks
+/// generated later inside that disc get higher sequences and are sent.
 #[must_use]
-pub fn complete_through(lowest_missing: Option<i64>, last_sequence: i64) -> i64 {
-    lowest_missing.map_or(last_sequence, |sequence| sequence - 1)
+pub fn complete_radius(nearest_missing_ring: Option<u32>, radius: i32) -> i32 {
+    nearest_missing_ring.map_or(radius, |ring| i32::try_from(ring).unwrap_or(i32::MAX).min(radius))
 }
 
 #[cfg(test)]
@@ -77,20 +66,25 @@ mod tests {
     }
 
     #[test]
-    fn lower_sequences_left_unsent_are_sent_next_session() {
-        // Nearest first: the near chunks (sequences 5 and 6) went out and were
-        // acknowledged; the far chunk generated first (sequence 2) did not.
+    fn chunks_from_the_nearest_missing_ring_out_are_sent_next_session() {
+        // Nearest first: the near chunks went out and were acknowledged; the
+        // far one, at ring 30, did not.
         let far = (Vector2::new(30, 0), 2);
         let near = [(Vector2::new(1, 0), 5), (Vector2::new(0, 1), 6)];
-        let acknowledged = |pos: ChunkPos, _| near.iter().any(|&(p, _)| p == pos);
-        let chunks = [far, near[0], near[1]];
+        let radius = complete_radius(Some(disc::ring_of(far.0.x, far.0.y)), 64);
+        assert_eq!(radius, 30);
 
-        let through = complete_through(lowest_missing(chunks, acknowledged), 6);
-        assert_eq!(through, 1);
-
-        // The client stores that and the disc, and sends them next session.
-        let known = KnownDisc::from_request(&request(through, (0, 0), 64));
+        // The client stores that disc with the newest sequence, and sends it
+        // next session.
+        let known = KnownDisc::from_request(&request(6, (0, 0), radius));
         assert!(!known.has(far.0, far.1), "the far chunk must be sent");
+        assert!(near.iter().all(|&(pos, sequence)| known.has(pos, sequence)));
+    }
+
+    #[test]
+    fn a_chunk_generated_later_inside_the_disc_is_sent() {
+        let known = KnownDisc::from_request(&request(6, (0, 0), 30));
+        assert!(!known.has(Vector2::new(2, 2), 7));
     }
 
     #[test]
@@ -99,19 +93,14 @@ mod tests {
         // centred at the origin, so this client never received it.
         let elsewhere = (Vector2::new(100, 0), 3);
         let inside = (Vector2::new(2, 2), 4);
-        let chunks = [inside];
-        let through = complete_through(lowest_missing(chunks, |_, _| true), 4);
-        assert_eq!(through, 4);
-
-        // The player walks east; the old disc no longer covers the chunk.
-        let known = KnownDisc::from_request(&request(through, (0, 0), 64));
+        let known = KnownDisc::from_request(&request(4, (0, 0), complete_radius(None, 64)));
         assert!(!known.has(elsewhere.0, elsewhere.1), "it must be sent");
         assert!(known.has(inside.0, inside.1));
     }
 
     #[test]
-    fn a_complete_disc_reaches_the_newest_sequence() {
-        assert_eq!(complete_through(None, 41), 41);
-        assert_eq!(complete_through(None, -1), -1);
+    fn a_complete_disc_is_the_whole_disc() {
+        assert_eq!(complete_radius(None, 512), 512);
+        assert_eq!(complete_radius(Some(600), 512), 512);
     }
 }
