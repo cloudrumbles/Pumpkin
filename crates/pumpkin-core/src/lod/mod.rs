@@ -672,9 +672,15 @@ impl Service {
                 let mut nearest_missing: Option<u32> = None;
                 let centre = session.centre;
                 let last_sequence =
-                    journal.for_each_within(centre, session.radius, |pos, sequence| {
+                    journal.for_each_within(centre, session.radius, |pos, _| {
                         generated += 1;
-                        if !session.has(pos, sequence) {
+                        // A chunk re-saved after it went out still counts:
+                        // the client follows its changes on the vanilla
+                        // packets while it is loaded near the player, so
+                        // only a chunk never acknowledged holds the disc in.
+                        if !session.delivered.contains_key(&pos)
+                            || session.unacknowledged_set.contains(&pos)
+                        {
                             let ring = disc::ring_of(pos.x - centre.x, pos.y - centre.y);
                             nearest_missing = Some(nearest_missing.map_or(ring, |near| near.min(ring)));
                         }
@@ -805,12 +811,13 @@ impl RateLog {
         let order = DiscOrder::get();
         let progress = sessions.first().map_or_else(String::new, |session| {
             format!(
-                "; {} of {} chunks in the disc around {:?}, {} generated, {} sent",
+                "; {} of {} chunks in the disc around {:?}, {} generated, {} sent, held whole to radius {}",
                 session.player.gameprofile.name,
                 order.len_within(session.radius),
                 session.centre,
                 session.generated_in_disc,
                 session.delivered_in_disc,
+                session.complete_radius,
             )
         });
         info!(
