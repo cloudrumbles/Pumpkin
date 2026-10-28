@@ -43,7 +43,8 @@ type ChunkPos = Vector2<i32>;
 /// generation depends on into memory, so this bounds memory as well as
 /// keeping the background pool busy.
 const MAX_TICKETS: usize = 128;
-/// Chunks a session may be waiting on, for generation or a disk read.
+/// Chunks a session may hold unsent: waiting on generation or a disk read,
+/// or read and waiting for room in its acknowledgement window.
 const LOOKAHEAD: usize = 512;
 /// Disc positions a session looks at in one pass.
 const SCAN_BUDGET: usize = 16_384;
@@ -488,7 +489,7 @@ impl Service {
             let mut looked = 0;
             while session.scan < offsets.len()
                 && looked < SCAN_BUDGET
-                && session.pending.len() < LOOKAHEAD
+                && session.pending.len() + session.ready.len() < LOOKAHEAD
             {
                 let (dx, dz) = offsets[session.scan];
                 let pos = session
