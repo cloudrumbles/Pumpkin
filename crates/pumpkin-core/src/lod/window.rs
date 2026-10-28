@@ -1,7 +1,7 @@
 //! The bound on `lod_chunk` columns sent but not yet acknowledged.
 
 /// Columns one client may have sent but not yet acknowledged.
-pub const MAX_UNACKNOWLEDGED: u32 = 256;
+pub const MAX_UNACKNOWLEDGED: u32 = 1024;
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum AckError {
@@ -96,9 +96,10 @@ mod tests {
         send_until_full(&mut window);
         window.acknowledge(10).unwrap();
         assert_eq!(send_until_full(&mut window), 10);
-        window.acknowledge(266).unwrap();
-        assert_eq!(send_until_full(&mut window), 256);
-        assert_eq!(window.sent(), 522);
+        let sent = MAX_UNACKNOWLEDGED + 10;
+        window.acknowledge(i32::try_from(sent).unwrap()).unwrap();
+        assert_eq!(send_until_full(&mut window), MAX_UNACKNOWLEDGED);
+        assert_eq!(window.sent(), sent + MAX_UNACKNOWLEDGED);
     }
 
     #[test]
