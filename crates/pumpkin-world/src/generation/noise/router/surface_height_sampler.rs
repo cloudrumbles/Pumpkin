@@ -57,6 +57,13 @@ impl<'a> SurfaceHeightEstimateSampler<'a> {
         self
     }
 
+    /// Releases quart-aligned surface samples retained by long-running,
+    /// provisional distant-terrain workers; nearby repeated samples are
+    /// amortized until the next bounded reset.
+    pub fn clear_cached_heights(&mut self) {
+        self.cache.clear();
+    }
+
     pub fn estimate_height(&mut self, block_x: i32, block_z: i32) -> i32 {
         let biome_aligned_x = biome_coords::to_block(biome_coords::from_block(block_x));
         let biome_aligned_z = biome_coords::to_block(biome_coords::from_block(block_z));
