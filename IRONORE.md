@@ -44,6 +44,8 @@ artifacts.
   chunk system without a server, times each stage and hashes each chunk's
   parts against a golden file. Feature placement isn't deterministic across
   runs yet, so blocks, light and heightmaps differ between runs.
+- Leave sky light above a column's surface to that chunk's own lighting pass,
+  instead of flooding the open air of unlit neighbours one cell at a time.
 
 Regression tests accompany these changes. A passing build or unit test does not
 establish survival parity or compatibility with vanilla saves.
