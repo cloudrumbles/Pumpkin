@@ -20,7 +20,7 @@ const COLUMNS: usize = (REGION_BLOCKS * REGION_BLOCKS) as usize;
 const CACHED_REGIONS: usize = 64;
 
 /// The biomes a region file names, in pomme-terrain's order.
-const BIOMES: [&Biome; 20] = [
+pub(crate) const BIOMES: [&Biome; 20] = [
     &Biome::PLAINS,
     &Biome::SNOWY_PLAINS,
     &Biome::DESERT,

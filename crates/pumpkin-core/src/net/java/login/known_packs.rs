@@ -4,25 +4,14 @@ use super::*;
 impl PendingConnection {
     pub async fn handle_known_packs(&mut self, server: &Server) {
         let version = CURRENT_MC_VERSION;
-        let registry = pumpkin_data::registry::Registry::get_synced(version);
-        for reg in &registry {
-            if reg.registry_id == "minecraft:damage_type" {
-                let merged = server
-                    .datapack_manager
-                    .merge_damage_type_entries(&reg.registry_entries);
-                self.send_packet_now(&CRegistryData::new(&reg.registry_id, &merged))
-                    .await;
-                continue;
-            }
-            let mut merged = server
-                .datapack_manager
-                .merge_registry_entries(&reg.registry_id, &reg.registry_entries);
+        let mut synced = server.datapack_manager.get_all_synced_registries();
+        for reg in &mut synced {
             if reg.registry_id == "minecraft:dimension_type"
                 && let Some(height) = server.basic_config.terrain.overworld_height()
             {
-                set_overworld_height(&mut merged, height);
+                set_overworld_height(&mut reg.registry_entries, height);
             }
-            self.send_packet_now(&CRegistryData::new(&reg.registry_id, &merged))
+            self.send_packet_now(&CRegistryData::new(&reg.registry_id, &reg.registry_entries))
                 .await;
         }
         let mut tags = Vec::new();

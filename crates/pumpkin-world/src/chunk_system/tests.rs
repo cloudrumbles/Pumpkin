@@ -1,4 +1,4 @@
-use super::schedule::{BACKGROUND_PRIORITY, Priorities, TaskHeapNode, TaskQueue, retry_priority};
+use super::schedule::{Priorities, TaskHeapNode, TaskQueue, retry_priority};
 use super::*;
 use crate::chunk_system::dag::Node;
 use crate::chunk_system::dag::NodeKey;
@@ -503,7 +503,7 @@ fn background_tasks_run_after_every_foreground_task() {
 fn a_failed_background_task_is_retried_as_background() {
     let priorities = Priorities::default();
     let priority = priorities.of(ChunkPos::new(0, 0), StagedChunkEnum::Empty);
-    assert!(retry_priority(priority) >= BACKGROUND_PRIORITY);
+    assert!(retry_priority(priority).is_background());
 }
 
 #[test]
@@ -519,4 +519,56 @@ fn later_background_stages_run_first() {
     assert!(lighting < noise);
     // At the same stage, the ticketed chunk runs before its neighbour.
     assert!(noise < priorities.of(ChunkPos::new(1, 0), StagedChunkEnum::Noise));
+}
+
+#[test]
+fn center_chunk_pyramid_prioritized_ahead_of_outer_rings() {
+    let mut last_level: ChunkLevel = HashMapType::default();
+    let base_center_level = 32i8;
+    for dx in -10i32..=10 {
+        for dz in -10i32..=10 {
+            let dist = dx.abs().max(dz.abs()) as i8;
+            last_level.insert(ChunkPos::new(dx, dz), base_center_level + dist);
+        }
+    }
+    let high_priority = Vec::new();
+
+    let center_full = GenerationSchedule::calc_priority(
+        &last_level,
+        &high_priority,
+        ChunkPos::new(0, 0),
+        StagedChunkEnum::Full,
+    );
+    let pyramid_edge_empty = GenerationSchedule::calc_priority(
+        &last_level,
+        &high_priority,
+        ChunkPos::new(5, 5),
+        StagedChunkEnum::Empty,
+    );
+    let ring1_full = GenerationSchedule::calc_priority(
+        &last_level,
+        &high_priority,
+        ChunkPos::new(1, 0),
+        StagedChunkEnum::Full,
+    );
+    let outer_ring_empty = GenerationSchedule::calc_priority(
+        &last_level,
+        &high_priority,
+        ChunkPos::new(10, 0),
+        StagedChunkEnum::Empty,
+    );
+
+    // TaskHeapNode reverses Ord so smaller TaskPriority pops first from BinaryHeap.
+    assert!(
+        center_full < pyramid_edge_empty,
+        "Higher stage (Full) in the same dependency wave must run before Empty"
+    );
+    assert!(
+        pyramid_edge_empty < ring1_full,
+        "Center chunk (0,0) dependency pyramid must precede ring-1 Full"
+    );
+    assert!(
+        ring1_full < outer_ring_empty,
+        "Inner ring Full chunks must not be preempted by outer-ring Empty tasks"
+    );
 }

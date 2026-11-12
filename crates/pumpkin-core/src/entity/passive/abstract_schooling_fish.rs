@@ -1,12 +1,12 @@
 use std::sync::{
-    Arc, Mutex, Weak,
+    Arc, Weak,
     atomic::{AtomicI32, Ordering::Relaxed},
 };
 
 use rand::RngExt;
 
 use super::abstract_fish::AbstractFish;
-use crate::entity::{EntityBase, mob::spawn::SpawnGroupData};
+use crate::entity::{EntityBase, mob::spawn::SpawnGroupData, weak_slot::WeakSlot};
 
 pub const SCHOOL_SEARCH_RANGE: f64 = 8.0;
 const LEADER_DISTANCE_SQR: f64 = 121.0;
@@ -14,7 +14,7 @@ const SCHOOL_CHECK_INTERVAL: i32 = 200;
 
 pub struct SchoolingFishData {
     pub self_reference: Weak<dyn EntityBase>,
-    leader: Mutex<Option<Weak<dyn EntityBase>>>,
+    leader: WeakSlot<dyn EntityBase>,
     school_size: AtomicI32,
 }
 
@@ -23,7 +23,7 @@ impl SchoolingFishData {
     pub fn new(self_reference: Weak<dyn EntityBase>) -> Self {
         Self {
             self_reference,
-            leader: Mutex::new(None),
+            leader: WeakSlot::new(),
             school_size: AtomicI32::new(1),
         }
     }
@@ -33,12 +33,7 @@ pub trait AbstractSchoolingFish: AbstractFish {
     fn schooling_data(&self) -> &SchoolingFishData;
 
     fn leader(&self) -> Option<Arc<dyn EntityBase>> {
-        self.schooling_data()
-            .leader
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .as_ref()
-            .and_then(Weak::upgrade)
+        self.schooling_data().leader.get()
     }
 
     fn is_follower(&self) -> bool {
@@ -61,24 +56,14 @@ pub trait AbstractSchoolingFish: AbstractFish {
     }
 
     fn start_following(&self, leader: &Arc<dyn EntityBase>) {
-        *self
-            .schooling_data()
-            .leader
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(Arc::downgrade(leader));
+        self.schooling_data().leader.set(leader);
         if let Some(fish) = leader.get_mob().and_then(|mob| mob.as_schooling_fish()) {
             fish.schooling_data().school_size.fetch_add(1, Relaxed);
         }
     }
 
     fn stop_following(&self) {
-        let leader = self
-            .schooling_data()
-            .leader
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .take()
-            .and_then(|leader| leader.upgrade());
+        let leader = self.schooling_data().leader.take();
         if let Some(fish) = leader
             .as_ref()
             .and_then(|leader| leader.get_mob())
@@ -156,7 +141,9 @@ pub trait AbstractSchoolingFish: AbstractFish {
 
     fn finalize_school_spawn(&self, group: Option<SpawnGroupData>) -> Option<SpawnGroupData> {
         self.get_mob_entity().finalize_spawn_base();
-        if let Some(SpawnGroupData::School(leader)) = &group {
+        if let Some(SpawnGroupData::School(leader) | SpawnGroupData::TropicalFish { leader, .. }) =
+            &group
+        {
             if let Some(leader) = leader.upgrade() {
                 self.start_following(&leader);
             }
@@ -167,6 +154,20 @@ pub trait AbstractSchoolingFish: AbstractFish {
             ))
         }
     }
+}
+
+/// Generates the `AbstractSchoolingFish` impl. The type needs a `schooling_data` field.
+#[macro_export]
+macro_rules! impl_schooling_fish {
+    ($fish:ty) => {
+        impl $crate::entity::passive::abstract_schooling_fish::AbstractSchoolingFish for $fish {
+            fn schooling_data(
+                &self,
+            ) -> &$crate::entity::passive::abstract_schooling_fish::SchoolingFishData {
+                &self.schooling_data
+            }
+        }
+    };
 }
 
 #[cfg(test)]

@@ -150,17 +150,16 @@ impl MobMetadata {
         self
     }
 
-    /// Sets the collar color for tamed mobs (wolves, cats).
+    /// Sets the collar color for tamed mobs (wolves, cats). Each species keeps it in its own
+    /// `tracked` slot.
     #[must_use]
-    pub fn collar_color(mut self, color: DyeColor) -> Self {
+    pub fn collar_color(mut self, tracked: TrackedData, color: DyeColor) -> Self {
         self.bedrock_data.set(
             entity_data_key::COLOR_INDEX,
             MetadataValue::Byte(color.id() as i8),
         );
-        self.java_entries.push(JavaMetadataEntry::VarInt(
-            tracked_data::wolf::COLLAR_COLOR,
-            color.id() as i32,
-        ));
+        self.java_entries
+            .push(JavaMetadataEntry::VarInt(tracked, color.id() as i32));
         self
     }
 
@@ -309,14 +308,14 @@ impl MobMetadata {
         self
     }
 
-    /// Sets bat roosting state.
+    /// Sets the full bat flags byte and the corresponding Bedrock resting state.
     #[must_use]
-    pub fn bat_roosting(mut self, roosting: bool) -> Self {
+    pub fn bat_flags(mut self, flags: i8) -> Self {
         self.bedrock_data
-            .set_actor_flag(entity_data_flag::RESTING, roosting);
+            .set_actor_flag(entity_data_flag::RESTING, flags & 1 != 0);
         self.java_entries.push(JavaMetadataEntry::Byte(
             tracked_data::bat::DATA_ID_FLAGS,
-            i8::from(roosting),
+            flags,
         ));
         self
     }

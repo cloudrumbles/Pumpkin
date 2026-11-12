@@ -6,14 +6,17 @@ use pumpkin_data::item_stack::ItemStack;
 use pumpkin_data::{
     damage::DamageType,
     data_component_impl::{EquipmentSlot, EquipmentType},
-    entity::EntityStatus,
+    entity::{EntityStatus, EntityType},
     item::Item,
     particle::Particle,
     sound::{Sound, SoundCategory},
     tag::{self, Taggable},
 };
 use pumpkin_nbt::{compound::NbtCompound, tag::NbtTag};
-use pumpkin_util::math::{euler_angle::EulerAngle, vector3::Vector3};
+use pumpkin_protocol::bedrock::server::actor_event::ActorEventID;
+use pumpkin_util::math::{
+    boundingbox::EntityDimensions, euler_angle::EulerAngle, vector3::Vector3,
+};
 
 #[derive(Debug, Clone, Copy)]
 pub struct PackedRotation {
@@ -146,6 +149,20 @@ impl ArmorStandEntity {
             current & !(bit_field as u8)
         };
         self.armor_stand_flags.store(new_value, Ordering::Relaxed);
+        self.update_dimensions();
+    }
+
+    /// Vanilla `ArmorStand.getDefaultDimensions`: a marker has no size, a small stand half.
+    fn update_dimensions(&self) {
+        let dimensions = if self.is_marker() {
+            EntityDimensions::new(0.0, 0.0, 0.0)
+        } else if self.is_small() {
+            let size = Entity::type_dimensions(&EntityType::ARMOR_STAND).scale(0.5);
+            EntityDimensions::new(size.width, size.height, 0.9875)
+        } else {
+            Entity::type_dimensions(&EntityType::ARMOR_STAND)
+        };
+        self.living_entity.entity.set_default_dimensions(dimensions);
     }
 
     pub fn can_use_slot(&self, slot: &EquipmentSlot) -> bool {
@@ -231,6 +248,10 @@ impl ArmorStandEntity {
 }
 
 impl EntityBase for ArmorStandEntity {
+    fn can_be_seen_by_anyone(&self) -> bool {
+        !self.is_invisible() && !self.is_marker()
+    }
+
     fn write_custom_nbt(&self, nbt: &mut NbtCompound) {
         let disabled_slots = self.disabled_slots.load(Ordering::Relaxed);
         // ...
@@ -288,6 +309,7 @@ impl EntityBase for ArmorStandEntity {
         }
 
         self.armor_stand_flags.store(flags, Ordering::Relaxed);
+        self.update_dimensions();
 
         if let Some(pose_tag) = nbt.get("Pose") {
             let packed: PackedRotation = pose_tag.clone().into();
@@ -385,7 +407,7 @@ impl EntityBase for ArmorStandEntity {
             .query_gametime();
 
         if time - self.last_hit_time.load(Ordering::Relaxed) > 5 && !always_kills {
-            world.send_entity_status(entity, EntityStatus::ArmorstandWobble, None);
+            world.send_entity_status(entity, EntityStatus::ArmorstandWobble, ActorEventID::None);
             world.play_sound(
                 Sound::EntityArmorStandHit,
                 SoundCategory::Neutral,
