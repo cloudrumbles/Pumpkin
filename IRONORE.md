@@ -5,8 +5,8 @@ This fork maintains the Pumpkin backend used by Ironore singleplayer.
 - Fork: https://github.com/cloudrumbles/Pumpkin
 - Maintained branch: `main`
 - Upstream: https://github.com/Pumpkin-MC/Pumpkin
-- Upstream base: `224f9f8144ca53a8d0800acb87607d714196e2a6`
-- Base release: `0.2.1+26.3-26.51`
+- Upstream base: `eda69440e6369c5f8a05c3f69fc809c40dab93a6`
+- Base release: `0.2.2+26.3-26.60`
 - Java protocol: 777 (Minecraft 26.3)
 - Pumpkin world DataVersion: 5023
 
@@ -52,8 +52,9 @@ establish survival parity or compatibility with vanilla saves.
 
 ## Validation
 
-Use an explicitly installed Rust toolchain supporting Rust 1.96 or newer. On the
-development host the selected toolchain is `nightly-2026-08-21`.
+Use an explicitly installed Rust toolchain supporting Rust 1.97 or newer
+(upstream's MSRV since 0.2.2). On the development host the selected toolchain
+is `nightly-2026-08-21`.
 
 ```sh
 cargo +nightly-2026-08-21 test --locked -p pumpkin-command
@@ -72,24 +73,27 @@ The official server JAR used for runtime comparison has SHA-256
 Keep Java source, game assets, test saves and executable artifacts outside git.
 Use disposable worlds for save/reopen and protocol tests.
 
-## Qualification (2026-10-26)
+## Qualification (2026-11-12)
 
-The fork at the 0.2.1 merge, plus the two fixes it needed, passed:
+The fork at the 0.2.2 merge, plus the one fix it needed, passed on Rust 1.99.1
+stable, with `cargo check --workspace --tests --locked` clean:
 
-- 88 `pumpkin-command` tests and five doctests, including the function-ID and
-  block-state regressions.
-- Six clock regressions in `pumpkin-world`.
-- 600 `pumpkin-core` library tests, including the NoAI, NoGravity,
-  block-entity and teleport-acknowledgement regressions.
-- All 22 checks of `tools/ironore/qualify.py --backend pumpkin` against the
-  development executable.
+- 89 `pumpkin-command` tests and five doctests.
+- 326 `pumpkin-world` library tests, including the six clock regressions, the
+  scheduler's foreground/background tests and upstream's priority test.
+- 737 `pumpkin-core` library tests.
+- `worldgen_bench` generated all 1,024 chunks through the merged scheduler
+  (5.1 s on 8 cores). Its golden hashes predate upstream's worldgen changes, so
+  they were not compared.
 
-The merge needed two fixes. The block-state command parser still used
-`(name, value)` string pairs, which upstream replaced with the `Property` enum.
-And `/forceload` never added a chunk-loading ticket, so qualify.py's fixture
-chunk was never loaded; forced chunks now hold tickets.
+One `pumpkin-world` test fails on fork `main` too:
+`write_world_info_reports_final_rename_failure` makes the world folder
+read-only, which a test host with `CAP_DAC_OVERRIDE` ignores.
 
-Native client acceptance remains pending.
+The merge needed one fix. Upstream's `populate_biomes` now matches on the biome
+supplier, so the terrain-diffusion supplier got its own arm. That arm, and
+terrain-diffusion generation in general, has no test yet. `qualify.py` and
+native client acceptance were not run for this merge.
 
 ## Updating upstream
 
