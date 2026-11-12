@@ -37,6 +37,7 @@ pub(crate) struct TaskPriority {
 }
 
 impl TaskPriority {
+    #[cfg(test)]
     pub(crate) const fn is_background(self) -> bool {
         self.background
     }

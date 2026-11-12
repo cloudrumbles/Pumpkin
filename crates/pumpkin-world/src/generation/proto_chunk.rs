@@ -1104,6 +1104,23 @@ impl ProtoChunk {
                     }
                 }
             }
+            crate::biome::ActiveBiomeSupplier::Diffusion(terrain) => {
+                // The same biome at every height of a column.
+                let biomes_per_side = biome_coords::from_block(CHUNK_DIM as i32);
+                let biome_height = biome_coords::from_block(self.height() as i32);
+                for x in 0..biomes_per_side {
+                    for z in 0..biomes_per_side {
+                        let biome = terrain.biome(
+                            biome_coords::to_block(start_biome_x + x),
+                            biome_coords::to_block(start_biome_z + z),
+                        );
+                        for y in 0..biome_height {
+                            let index = self.local_biome_pos_to_biome_index(x, y, z);
+                            self.flat_biome_map[index] = biome.id;
+                        }
+                    }
+                }
+            }
         }
     }
 
