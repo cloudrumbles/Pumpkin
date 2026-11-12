@@ -76,7 +76,21 @@ impl LodService {
     fn send(&self, world: &Arc<World>, message: Message) {
         let sender = self.sender.get_or_init(|| {
             let (sender, receiver) = mpsc::unbounded_channel();
-            tokio::spawn(Service::new(world, receiver).run());
+            // Packets are handled on the world's tick, which runs on the
+            // simulation pool outside Tokio, so the service is started on
+            // the server's runtime rather than the current one.
+            match world.server.upgrade() {
+                Some(server) => {
+                    let world = world.clone();
+                    server
+                        .runtime
+                        .spawn(async move { Service::new(&world, receiver).run().await });
+                }
+                None => error!(
+                    "No server to run background generation for {}",
+                    world.dimension.minecraft_name
+                ),
+            }
             sender
         });
         if sender.send(message).is_err() {
